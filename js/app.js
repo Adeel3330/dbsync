@@ -7,6 +7,7 @@ let currentPage = 'dashboard';
 let configModal = null;
 let insertModal = null;
 let pendingInsert = null;
+let dbNames = { db_a: 'Database A', db_b: 'Database B' };
 
 // Initialize on document ready
 document.addEventListener('DOMContentLoaded', function() {
@@ -117,7 +118,8 @@ function loadConfig() {
         });
 }
 
-// Save configuration
+// Save c
+// onfiguration
 function saveConfig() {
     const form = document.getElementById('configForm');
     const formData = new FormData(form);
@@ -241,6 +243,16 @@ function updateConnectionStatus(elementId, status) {
     }
 }
 
+// Store database names globally when loading summary
+function storeDbNames(data) {
+    if (data && data.dbNames) {
+        dbNames = {
+            db_a: data.dbNames.db_a || 'Database A',
+            db_b: data.dbNames.db_b || 'Database B'
+        };
+    }
+}
+
 // Get dashboard summary
 function getDashboardSummary() {
     showLoader('Loading summary...');
@@ -250,6 +262,7 @@ function getDashboardSummary() {
         .then(data => {
             hideLoader();
             if (data.success) {
+                storeDbNames(data.data);
                 updateDashboardCards(data.data);
             } else {
                 showToast(data.message || 'Failed to load summary', 'error');
@@ -464,6 +477,9 @@ function loadTablesDropdown() {
             hideLoader();
             console.log(data)
             if (data.success && data.data) {
+                // Store database names for use in insert modal
+                storeDbNames(data.data);
+                
                 const select = document.getElementById('tableSelect');
                 if (select) {
                     // Get tables from the correct API response structure
@@ -728,10 +744,9 @@ function insertMissingRow(sourceDb, targetDb, tableName, rowIndex, type) {
         tableName,
         rowData: rowData
     };
-    console.log(config)
-    // Update modal
-    document.getElementById('insertSourceDb').textContent = sourceDb.toUpperCase();
-    document.getElementById('insertTargetDb').textContent = targetDb.toUpperCase();
+    // Update modal with actual database names
+    document.getElementById('insertSourceDb').textContent = dbNames[sourceDb] || sourceDb.toUpperCase();
+    document.getElementById('insertTargetDb').textContent = dbNames[targetDb] || targetDb.toUpperCase();
     
     // Build table
     const columns = Object.keys(rowData);
@@ -822,9 +837,9 @@ function prepareInsert(sourceDb, targetDb, tableName, rowIndex) {
         rowData: row
     };
     
-    // Update modal
-    document.getElementById('insertSourceDb').textContent = sourceDb.toUpperCase();
-    document.getElementById('insertTargetDb').textContent = targetDb.toUpperCase();
+    // Update modal with actual database names
+    document.getElementById('insertSourceDb').textContent = dbNames[sourceDb] || sourceDb.toUpperCase();
+    document.getElementById('insertTargetDb').textContent = dbNames[targetDb] || targetDb.toUpperCase();
     
     // Build table
     const columns = Object.keys(row);

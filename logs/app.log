@@ -1,2 +1,4 @@
 [2026-01-16 07:18:33] [INFO] Testing database connections before save
 [2026-01-16 07:18:33] [SUCCESS] Configuration saved successfully
+[2026-01-16 10:19:11] [INFO] Starting insert: tblnotces_courts from db_a to db_b | {"log_id":"log_696a109fed586","columns":["courts_id","court_name"]}
+[2026-01-16 10:19:11] [SUCCESS] Insert completed: tblnotces_courts | {"log_id":"log_696a109fed586","source":"db_a","target":"db_b"}

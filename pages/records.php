@@ -120,10 +120,18 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(response => response.json())
         .then(data => {
             hideLoader();
-            if (data.success) {
+            if (data.success && data.data) {
+                // Store database names for use in insert modal
+                if (data.data.dbNames) {
+                    dbNames = {
+                        db_a: data.data.dbNames.db_a || 'Database A',
+                        db_b: data.data.dbNames.db_b || 'Database B'
+                    };
+                }
+                
                 const select = document.getElementById('tableSelect');
-                const tablesA = data.tablesA || [];
-                const tablesB = data.tablesB || [];
+                const tablesA = data.data.dbA?.tables || [];
+                const tablesB = data.data.dbB?.tables || [];
                 const commonTables = tablesA.filter(t => tablesB.includes(t));
                 
                 select.innerHTML = '<option value="">-- Select a table --</option>' +
