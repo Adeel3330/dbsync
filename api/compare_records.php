@@ -35,12 +35,6 @@ try {
     $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 100;
     $offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
     
-    $result = compareRecords('db_a', 'db_b', $tableName, $primaryKeys, $limit, $offset);
-    
-    if (isset($result['error'])) {
-        throw new Exception($result['error']);
-    }
-    
     // Fetch actual row data for differences
     $pdoA = DatabaseConnection::getConnection('db_a');
     $pdoB = DatabaseConnection::getConnection('db_b');

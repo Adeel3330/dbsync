@@ -232,8 +232,9 @@ function getTableData($dbKey, $tableName, $limit = 100, $offset = 0, $orderBy = 
 /**
  * Get comparison data for records
  * Compares rows based on FULL ROW DATA (not just primary key)
+ * Returns ALL matching/different records without limiting
  */
-function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys, $limit = 1000, $offset = 0) {
+function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys) {
     try {
         $pdoA = DatabaseConnection::getConnection($dbKeyA);
         $pdoB = DatabaseConnection::getConnection($dbKeyB);
@@ -265,9 +266,15 @@ function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys, $limit = 100
             $pkSelectCols[] = "`{$pk}`";
         }
         
+        // Select ALL columns (not just PK) for insert/update operations
+        $allSelectCols = [];
+        foreach ($columns as $col) {
+            $allSelectCols[] = "`{$col}`";
+        }
+        
         // Fetch all rows with full row hash from DB A
         $rowListA = [];
-        $sqlA = "SELECT " . implode(', ', $pkSelectCols) . ", MD5(CONCAT(" . implode(', ', $hashCols) . ")) as full_hash FROM `{$tableName}`";
+        $sqlA = "SELECT " . implode(', ', $allSelectCols) . ", MD5(CONCAT(" . implode(', ', $hashCols) . ")) as full_hash FROM `{$tableName}`";
         $stmtA = $pdoA->query($sqlA);
         while ($row = $stmtA->fetch()) {
             $pkValues = [];
@@ -340,9 +347,9 @@ function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys, $limit = 100
             'missingInB' => count($missingInB),
             'differentData' => count($differentData),
             'matched' => count($matched),
-            'missingInA_rows' => array_slice($missingInA, 0, $limit),
-            'missingInB_rows' => array_slice($missingInB, 0, $limit),
-            'differentData_rows' => array_slice($differentData, 0, $limit),
+            'missingInA_rows' => $missingInA,
+            'missingInB_rows' => $missingInB,
+            'differentData_rows' => $differentData,
             'primaryKeys' => $primaryKeys,
             'columns' => $columns
         ];

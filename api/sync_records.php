@@ -360,21 +360,26 @@ function executeSync($sourceDb, $targetDb, $tableName, $options) {
     // Execute CREATE operations (missing in target)
     if ($createMissing && !$dryRun) {
         foreach ($comparison['missingInB_rows'] as $row) {
+            // Extract row data from compareRecords structure (has 'pk', 'data', and 'full_hash' keys)
+            $rowData = $row['data'] ?? $row;
+            // Remove 'pk' and 'full_hash' keys if they exist (these are computed columns, not actual DB columns)
+            unset($rowData['pk'], $rowData['full_hash']);
+            
             try {
-                $result = insertRow($sourceDb, $targetDb, $tableName, $row);
+                $result = insertRow($sourceDb, $targetDb, $tableName, $rowData);
                 
                 if ($result['success']) {
                     $results['create']['success']++;
                     $results['create']['details'][] = [
                         'status' => 'success',
-                        'pk' => getPkValue($row, $primaryKeys),
+                        'pk' => $row['pk'] ?? getPkValue($rowData, $primaryKeys),
                         'message' => 'Created successfully'
                     ];
                 } else {
                     $results['create']['failed']++;
                     $results['create']['details'][] = [
                         'status' => 'failed',
-                        'pk' => getPkValue($row, $primaryKeys),
+                        'pk' => $row['pk'] ?? getPkValue($rowData, $primaryKeys),
                         'message' => $result['message']
                     ];
                     
@@ -382,14 +387,14 @@ function executeSync($sourceDb, $targetDb, $tableName, $options) {
                         'log_id' => $logId,
                         'table' => $tableName,
                         'operation' => 'CREATE',
-                        'pk' => getPkValue($row, $primaryKeys)
+                        'pk' => $row['pk'] ?? getPkValue($rowData, $primaryKeys)
                     ]);
                 }
             } catch (Exception $e) {
                 $results['create']['failed']++;
                 $results['create']['details'][] = [
                     'status' => 'failed',
-                    'pk' => getPkValue($row, $primaryKeys),
+                    'pk' => $row['pk'] ?? getPkValue($rowData, $primaryKeys),
                     'message' => $e->getMessage()
                 ];
             }
@@ -397,9 +402,12 @@ function executeSync($sourceDb, $targetDb, $tableName, $options) {
     } else {
         // Just count for dry run
         $results['create']['details'] = array_map(function($row) use ($primaryKeys) {
+            $rowData = $row['data'] ?? $row;
+            // Remove 'pk' and 'full_hash' keys if they exist
+            unset($rowData['pk'], $rowData['full_hash']);
             return [
                 'status' => $dryRun ? 'pending' : 'skipped',
-                'pk' => getPkValue($row, $primaryKeys),
+                'pk' => $row['pk'] ?? getPkValue($rowData, $primaryKeys),
                 'message' => $dryRun ? 'Would be created' : 'Skipped'
             ];
         }, $comparison['missingInB_rows']);
@@ -410,6 +418,9 @@ function executeSync($sourceDb, $targetDb, $tableName, $options) {
         foreach ($comparison['differentData_rows'] as $rowDiff) {
             $rowA = $rowDiff['dataA']; // Source data
             $rowB = $rowDiff['dataB']; // Target data
+            
+            // Remove 'full_hash' key if it exists (computed column, not actual DB column)
+            unset($rowA['full_hash'], $rowB['full_hash']);
             
             try {
                 $result = updateRow($targetDb, $tableName, $primaryKeys, $rowA);

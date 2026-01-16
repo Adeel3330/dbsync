@@ -603,7 +603,7 @@ function updateSelectedCountDb() {
 
 // Execute sync for multiple tables
 function executeSyncDB() {
-    alert(syncPreviewData,"here")
+    // alert(syncPreviewData,"here")
     // if (!syncPreviewData) {
     //     showToast('Please generate a preview first', 'warning');
     //     return;

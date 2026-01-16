@@ -136,7 +136,7 @@ try {
         //    echo 1;
         // Compare records if table has primary key
         if (!empty($primaryKeys)) {
-            $comparison = compareRecords('db_a', 'db_b', $tableName, $primaryKeys, 1000000, 0);
+            $comparison = compareRecords('db_a', 'db_b', $tableName, $primaryKeys);
             
             if (!isset($comparison['error'])) {
                 $tableReport['records'] = [
