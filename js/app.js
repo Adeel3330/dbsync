@@ -500,6 +500,8 @@ function loadTablesDropdown() {
 // Compare records for selected table
 function compareRecordsForTable() {
     const select = document.getElementById('tableSelect');
+    const comparisonSummary = document.getElementById('comparisonSummary');
+    const initialState = document.getElementById('initialState');
     const tableName = select?.value;
     
     if (!tableName) return;
@@ -511,19 +513,27 @@ function compareRecordsForTable() {
         .then(data => {
             hideLoader();
             if (data.success) {
+                comparisonSummary.style.display = 'block'
+                initialState.style.display = 'none'
                 renderRecordComparison(data.data, tableName);
+
             } else {
+                comparisonSummary.style.display = 'none'
+                initialState.style.display = 'block'
                 showToast(data.message || 'Failed to compare records', 'error');
             }
         })
         .catch(error => {
             hideLoader();
+            comparisonSummary.style.display = 'none'
+                initialState.style.display = 'block'
             showToast('Error comparing records: ' + error.message, 'error');
         });
 }
 
 // Render record comparison
 function renderRecordComparison(data, tableName) {
+    console.log(data,tableName)
     const container = document.getElementById('recordResults');
     if (!container) return;
     
@@ -537,53 +547,48 @@ function renderRecordComparison(data, tableName) {
     
     let html = `
         <div class="alert alert-info mb-3">
-            <strong>Primary Keys:</strong> ${data.primaryKeys.join(', ')}
+            <strong>Primary Keys:</strong> ${data.primaryKeys.join(', ')}<br>
+            <strong>Columns:</strong> ${data.columns?.join(', ') || 'N/A'}
         </div>
     `;
     
     // Missing in A (exist in B but not in A)
-    if (data.missingInA > 0) {
+    if (data.missingInA > 0 && data.missingInA_rows && data.missingInA_rows.length > 0) {
         html += `
             <div class="card mb-4 border-danger">
                 <div class="card-header bg-danger text-white">
                     <h5 class="mb-0"><i class="fas fa-trash me-2"></i>Rows Missing in DB A (from DB B): ${data.missingInA}</h5>
                 </div>
                 <div class="card-body">
-                    <button class="btn btn-danger btn-sm mb-3" onclick="loadMissingRows('db_b', '${escapeHtml(tableName)}', 'db_a')">
-                        <i class="fas fa-download me-1"></i>Load & Insert to DB A
-                    </button>
-                    <div class="table-responsive" id="missingInAWrapper"></div>
+                    ${renderRowsTable(data.missingInA_rows, data.columns, 'db_a', 'db_b', tableName, 'missing')}
                 </div>
             </div>
         `;
     }
     
     // Missing in B (exist in A but not in B)
-    if (data.missingInB > 0) {
+    if (data.missingInB > 0 && data.missingInB_rows && data.missingInB_rows.length > 0) {
         html += `
             <div class="card mb-4 border-danger">
                 <div class="card-header bg-danger text-white">
                     <h5 class="mb-0"><i class="fas fa-trash me-2"></i>Rows Missing in DB B (from DB A): ${data.missingInB}</h5>
                 </div>
                 <div class="card-body">
-                    <button class="btn btn-danger btn-sm mb-3" onclick="loadMissingRows('db_a', '${escapeHtml(tableName)}', 'db_b')">
-                        <i class="fas fa-download me-1"></i>Load & Insert to DB B
-                    </button>
-                    <div class="table-responsive" id="missingInBWrapper"></div>
+                    ${renderRowsTable(data.missingInB_rows, data.columns, 'db_a', 'db_b', tableName, 'missing')}
                 </div>
             </div>
         `;
     }
     
     // Different data
-    if (data.differentData > 0) {
+    if (data.differentData > 0 && data.differentData_rows && data.differentData_rows.length > 0) {
         html += `
             <div class="card mb-4 border-warning">
                 <div class="card-header bg-warning text-dark">
                     <h5 class="mb-0"><i class="fas fa-edit me-2"></i>Rows with Different Data: ${data.differentData}</h5>
                 </div>
                 <div class="card-body">
-                    <div class="table-responsive" id="differentDataWrapper"></div>
+                    ${renderDifferentRowsTable(data.differentData_rows, data.columns, 'db_a', 'db_b', tableName)}
                 </div>
             </div>
         `;
@@ -600,8 +605,142 @@ function renderRecordComparison(data, tableName) {
             </div>
         </div>
     `;
-    
+    console.log(html,container)
     container.innerHTML = html;
+
+    // display show
+    
+    // Store data globally for insert
+    window.recordComparisonData = data;
+}
+
+// Render rows table
+function renderRowsTable(rows, columns, sourceDb, targetDb, tableName, type) {
+    console.log(rows)
+    if (!rows || rows.length === 0) {
+        return '<div class="alert alert-info">No rows to display.</div>';
+    }
+    
+    const displayColumns = columns || Object.keys(rows[0]);
+    
+    let html = `
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped table-hover" id="missingRowsTable">
+                <thead class="table-dark">
+                    <tr>
+                        ${displayColumns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    rows.forEach((row, index) => {
+        html += `<tr class="row-missing">`;
+        displayColumns.forEach(col => {
+            const value = row[col] !== undefined ? escapeHtml(String(row[col])) : '<em class="text-muted">NULL</em>';
+            html += `<td>${value}</td>`;
+        });
+        html += `
+            <td>
+                <button class="btn btn-sm btn-success" onclick="insertMissingRow('${sourceDb}', '${targetDb}', '${escapeHtml(tableName)}', ${index}, '${type}')">
+                    <i class="fas fa-plus me-1"></i>Insert
+                </button>
+            </td>
+        </tr>`;
+    });
+    
+    html += `</tbody></table></div>`;
+    console.log(html)
+    
+    return html;
+}
+
+// Render different rows table (side by side comparison)
+function renderDifferentRowsTable(rows, columns, sourceDb, targetDb, tableName) {
+    if (!rows || rows.length === 0) {
+        return '<div class="alert alert-info">No different rows to display.</div>';
+    }
+    
+    const displayColumns = columns || Object.keys(rows[0].dataA || {});
+    
+    let html = `
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped table-hover" id="differentRowsTable">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Column</th>
+                        <th class="bg-primary text-white">DB A Value</th>
+                        <th class="bg-info text-white">DB B Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    rows.forEach((rowDiff, rowIndex) => {
+        const dataA = rowDiff.dataA;
+        const dataB = rowDiff.dataB;
+        
+        html += `<tr class="row-different"><td colspan="3" class="bg-light text-center"><strong>Row #${rowIndex + 1} (PK: ${escapeHtml(rowDiff.pk)})</strong></td></tr>`;
+        
+        displayColumns.forEach(col => {
+            const valA = dataA[col] !== undefined ? escapeHtml(String(dataA[col])) : '<em class="text-muted">NULL</em>';
+            const valB = dataB[col] !== undefined ? escapeHtml(String(dataB[col])) : '<em class="text-muted">NULL</em>';
+            const isDifferent = String(dataA[col]) !== String(dataB[col]);
+            
+            html += `<tr>
+                <td>${escapeHtml(col)}</td>
+                <td class="${isDifferent ? 'bg-warning' : ''}">${valA}</td>
+                <td class="${isDifferent ? 'bg-warning' : ''}">${valB}</td>
+            </tr>`;
+        });
+    });
+    
+    html += `</tbody></table></div>`;
+    
+    return html;
+}
+
+// Insert missing row
+function insertMissingRow(sourceDb, targetDb, tableName, rowIndex, type) {
+    if (!window.recordComparisonData) {
+        showToast('Comparison data not found', 'error');
+        return;
+    }
+    
+    let rowData;
+    if (type === 'missing') {
+        if (sourceDb === 'db_a') {
+            rowData = window.recordComparisonData.missingInB_rows[rowIndex];
+        } else {
+            rowData = window.recordComparisonData.missingInA_rows[rowIndex];
+        }
+    }
+    
+    if (!rowData) {
+        showToast('Row data not found', 'error');
+        return;
+    }
+    
+    pendingInsert = {
+        sourceDb,
+        targetDb,
+        tableName,
+        rowData: rowData
+    };
+    console.log(config)
+    // Update modal
+    document.getElementById('insertSourceDb').textContent = sourceDb.toUpperCase();
+    document.getElementById('insertTargetDb').textContent = targetDb.toUpperCase();
+    
+    // Build table
+    const columns = Object.keys(rowData);
+    document.getElementById('insertRowHeader').innerHTML = columns.map(col => `<th>${escapeHtml(col)}</th>`).join('');
+    document.getElementById('insertRowBody').innerHTML = `
+        <tr>${columns.map(col => `<td>${escapeHtml(String(rowData[col] || 'NULL'))}</td>`).join('')}</tr>
+    `;
+    
+    insertModal.show();
 }
 
 // Load missing rows
@@ -646,7 +785,6 @@ function renderMissingRowsTable(rows, wrapperId, sourceDb, targetDb, tableName) 
                 </thead>
                 <tbody>
     `;
-    
     rows.forEach((row, index) => {
         html += `<tr class="row-missing">`;
         columns.forEach(col => {
@@ -874,6 +1012,7 @@ window.testConnection = testConnection;
 window.getDashboardSummary = getDashboardSummary;
 window.compareStructures = compareStructures;
 window.compareRecordsForTable = compareRecordsForTable;
+window.insertMissingRow = insertMissingRow;
 window.loadMissingRows = loadMissingRows;
 window.prepareInsert = prepareInsert;
 window.confirmInsert = confirmInsert;

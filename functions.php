@@ -231,6 +231,7 @@ function getTableData($dbKey, $tableName, $limit = 100, $offset = 0, $orderBy = 
 
 /**
  * Get comparison data for records
+ * Compares rows based on FULL ROW DATA (not just primary key)
  */
 function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys, $limit = 1000, $offset = 0) {
     try {
@@ -241,60 +242,94 @@ function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys, $limit = 100
         $countA = getTableRowCount($dbKeyA, $tableName);
         $countB = getTableRowCount($dbKeyB, $tableName);
         
-        // Fetch all primary keys and hashes from both databases
-        $pkListA = [];
-        $pkListB = [];
+        // Get all columns for the table
+        $structA = getTableStructure($dbKeyA, $tableName);
+        $columns = [];
+        foreach ($structA['columns'] as $col) {
+            $columns[] = $col['Field'];
+        }
         
-        // Build SELECT columns for primary keys
+        if (empty($columns)) {
+            throw new Exception('No columns found in table');
+        }
+        
+        // Build MD5 hash of ALL column values (full row comparison)
+        $hashCols = [];
+        foreach ($columns as $col) {
+            $hashCols[] = "IFNULL(`{$col}`,'')";
+        }
+        
+        // Use primary key for row identification
         $pkSelectCols = [];
         foreach ($primaryKeys as $pk) {
             $pkSelectCols[] = "`{$pk}`";
         }
         
-        // Build MD5 CONCAT for hash
-        $pkHashCols = [];
-        foreach ($primaryKeys as $pk) {
-            $pkHashCols[] = "IFNULL(`{$pk}`,'')";
-        }
-        
-        $sql = "SELECT " . implode(', ', $pkSelectCols) . ", MD5(CONCAT(" . implode(', ', $pkHashCols) . ")) as row_hash FROM `{$tableName}`";
-        
-        $stmtA = $pdoA->query($sql);
+        // Fetch all rows with full row hash from DB A
+        $rowListA = [];
+        $sqlA = "SELECT " . implode(', ', $pkSelectCols) . ", MD5(CONCAT(" . implode(', ', $hashCols) . ")) as full_hash FROM `{$tableName}`";
+        $stmtA = $pdoA->query($sqlA);
         while ($row = $stmtA->fetch()) {
             $pkValues = [];
             foreach ($primaryKeys as $pk) {
                 $pkValues[] = $row[$pk];
             }
             $pkKey = implode('_', $pkValues);
-            $pkListA[$pkKey] = $row['row_hash'];
+            $rowListA[$pkKey] = [
+                'hash' => $row['full_hash'],
+                'data' => $row
+            ];
         }
         
-        $stmtB = $pdoB->query($sql);
+        // Fetch all rows with full row hash from DB B
+        $rowListB = [];
+        $sqlB = "SELECT " . implode(', ', $pkSelectCols) . ", MD5(CONCAT(" . implode(', ', $hashCols) . ")) as full_hash FROM `{$tableName}`";
+        $stmtB = $pdoB->query($sqlB);
         while ($row = $stmtB->fetch()) {
             $pkValues = [];
             foreach ($primaryKeys as $pk) {
                 $pkValues[] = $row[$pk];
             }
             $pkKey = implode('_', $pkValues);
-            $pkListB[$pkKey] = $row['row_hash'];
+            $rowListB[$pkKey] = [
+                'hash' => $row['full_hash'],
+                'data' => $row
+            ];
         }
         
-        // Find differences
+        // Find differences - compare by primary key existence AND full row data
         $missingInA = [];
         $missingInB = [];
         $differentData = [];
+        $matched = [];
         
-        foreach ($pkListA as $pk => $hash) {
-            if (!isset($pkListB[$pk])) {
-                $missingInB[] = $pk;
-            } elseif ($hash !== $pkListB[$pk]) {
-                $differentData[] = $pk;
+        foreach ($rowListA as $pk => $rowDataA) {
+            if (!isset($rowListB[$pk])) {
+                // Primary key exists in A but not in B
+                $missingInB[] = [
+                    'pk' => $pk,
+                    'data' => $rowDataA['data']
+                ];
+            } elseif ($rowDataA['hash'] !== $rowListB[$pk]['hash']) {
+                // Same primary key but different row data
+                $differentData[] = [
+                    'pk' => $pk,
+                    'dataA' => $rowDataA['data'],
+                    'dataB' => $rowListB[$pk]['data']
+                ];
+            } else {
+                // Exact match
+                $matched[] = $pk;
             }
         }
         
-        foreach ($pkListB as $pk => $hash) {
-            if (!isset($pkListA[$pk])) {
-                $missingInA[] = $pk;
+        foreach ($rowListB as $pk => $rowDataB) {
+            if (!isset($rowListA[$pk])) {
+                // Primary key exists in B but not in A
+                $missingInA[] = [
+                    'pk' => $pk,
+                    'data' => $rowDataB['data']
+                ];
             }
         }
         
@@ -304,8 +339,12 @@ function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys, $limit = 100
             'missingInA' => count($missingInA),
             'missingInB' => count($missingInB),
             'differentData' => count($differentData),
-            'matched' => $countA - count($missingInA) - count($differentData),
-            'primaryKeys' => $primaryKeys
+            'matched' => count($matched),
+            'missingInA_rows' => array_slice($missingInA, 0, $limit),
+            'missingInB_rows' => array_slice($missingInB, 0, $limit),
+            'differentData_rows' => array_slice($differentData, 0, $limit),
+            'primaryKeys' => $primaryKeys,
+            'columns' => $columns
         ];
     } catch (Exception $e) {
         return [
