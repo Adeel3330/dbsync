@@ -82,10 +82,38 @@ function loadConfig() {
     fetch('../api/get_summary.php')
         .then(response => response.json())
         .then(data => {
-            // Config loaded silently
+               console.log(data)
+            if (data.success && data.data) {
+                const select = document.getElementById('tableSelect');
+                if (select) {
+                    // Get tables from the correct API response structure
+                    const tablesA = data.data.dbA?.tables || [];
+                    const tablesB = data.data.dbB?.tables || [];
+                    
+                    // Get common tables (exist in both databases)
+                    const commonTables = tablesA.filter(t => tablesB.includes(t));
+                    console.log(commonTables)
+                    // Build dropdown options
+                    if (commonTables.length > 0) {
+                        select.innerHTML = '<option value="">-- Select a table --</option>' +
+                            commonTables.map(table => 
+                                `<option value="${escapeHtml(table)}">${escapeHtml(table)}</option>`
+                            ).join('');
+                        
+                        // Trigger change to load data
+                        select.dispatchEvent(new Event('change'));
+                    } else {
+                        select.innerHTML = '<option value="">No common tables found</option>';
+                        showToast('No common tables found between databases', 'warning');
+                    }
+                }
+            } else {
+                showToast(data.message || 'Failed to load tables', 'error');
+            }
         })
         .catch(error => {
             console.log('Config may need to be saved');
+            showToast(data.error || 'Failed to load dropdown','error')
         });
 }
 
@@ -235,12 +263,12 @@ function getDashboardSummary() {
 
 // Update dashboard cards
 function updateDashboardCards(data) {
-    // Update DB A stats
-    document.getElementById('dbATables').textContent = data.dbA.tables;
+    // Update DB A stats - tables is now an array
+    document.getElementById('dbATables').textContent = data.dbA.tables?.length || 0;
     document.getElementById('dbAConnected').textContent = data.dbA.connected ? 'Connected' : 'Disconnected';
     
-    // Update DB B stats
-    document.getElementById('dbBTables').textContent = data.dbB.tables;
+    // Update DB B stats - tables is now an array
+    document.getElementById('dbBTables').textContent = data.dbB.tables?.length || 0;
     document.getElementById('dbBConnected').textContent = data.dbB.connected ? 'Connected' : 'Disconnected';
     
     // Update summary
@@ -434,23 +462,33 @@ function loadTablesDropdown() {
         .then(response => response.json())
         .then(data => {
             hideLoader();
-            if (data.success) {
+            console.log(data)
+            if (data.success && data.data) {
                 const select = document.getElementById('tableSelect');
                 if (select) {
-                    // Get common tables
-                    const tablesA = data.tablesA || [];
-                    const tablesB = data.tablesB || [];
+                    // Get tables from the correct API response structure
+                    const tablesA = data.data.dbA?.tables || [];
+                    const tablesB = data.data.dbB?.tables || [];
+                    
+                    // Get common tables (exist in both databases)
                     const commonTables = tablesA.filter(t => tablesB.includes(t));
-                    
-                    select.innerHTML = commonTables.map(table => 
-                        `<option value="${escapeHtml(table)}">${escapeHtml(table)}</option>`
-                    ).join('');
-                    
-                    // Trigger change to load data
+                    console.log(commonTables)
+                    // Build dropdown options
                     if (commonTables.length > 0) {
+                        select.innerHTML = '<option value="">-- Select a table --</option>' +
+                            commonTables.map(table => 
+                                `<option value="${escapeHtml(table)}">${escapeHtml(table)}</option>`
+                            ).join('');
+                        
+                        // Trigger change to load data
                         select.dispatchEvent(new Event('change'));
+                    } else {
+                        select.innerHTML = '<option value="">No common tables found</option>';
+                        showToast('No common tables found between databases', 'warning');
                     }
                 }
+            } else {
+                showToast(data.message || 'Failed to load tables', 'error');
             }
         })
         .catch(error => {

@@ -15,8 +15,8 @@ $response = [
     'success' => false,
     'message' => '',
     'data' => [
-        'dbA' => ['tables' => 0, 'connected' => false],
-        'dbB' => ['tables' => 0, 'connected' => false],
+        'dbA' => ['tables' => [], 'connected' => false],
+        'dbB' => ['tables' => [], 'connected' => false],
         'summary' => [
             'missingTables' => 0,
             'matchedTables' => 0,
@@ -31,10 +31,10 @@ try {
     $tablesA = getAllTables('db_a');
     $tablesB = getAllTables('db_b');
     
-    $response['data']['dbA']['tables'] = count($tablesA);
+    $response['data']['dbA']['tables'] = $tablesA;
     $response['data']['dbA']['connected'] = !empty($tablesA);
     
-    $response['data']['dbB']['tables'] = count($tablesB);
+    $response['data']['dbB']['tables'] = $tablesB;
     $response['data']['dbB']['connected'] = !empty($tablesB);
     
     if (!empty($tablesA) && !empty($tablesB)) {

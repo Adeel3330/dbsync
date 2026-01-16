@@ -132,10 +132,11 @@ document.addEventListener('DOMContentLoaded', function() {
     fetch('../api/get_summary.php')
         .then(response => response.json())
         .then(data => {
+            console.log(data.data)
             if (data.success) {
                 const select = document.getElementById('detailTableSelect');
-                const tablesA = data.tablesA || [];
-                const tablesB = data.tablesB || [];
+                const tablesA = data.data.dbA.tables || [];
+                const tablesB = data.data.dbB.tables || [];
                 const commonTables = tablesA.filter(t => tablesB.includes(t));
                 
                 select.innerHTML = '<option value="">-- Select a table --</option>' +
