@@ -1175,3 +1175,388 @@ window.exportToCSV = exportToCSV;
 window.loadLogs = loadLogs;
 window.debounce = debounce;
 
+// =====================================================
+// SYNC RECORDS FUNCTIONS
+// =====================================================
+
+/**
+ * Preview sync operations for selected table
+ */
+function previewSync() {
+    const sourceDb = document.getElementById('sourceDb')?.value || 'db_a';
+    const targetDb = document.getElementById('targetDb')?.value || 'db_b';
+    const tableName = document.getElementById('tableSelect')?.value;
+    
+    if (!tableName) {
+        const previewSection = document.getElementById('previewSection');
+        const initialState = document.getElementById('initialState');
+        if (previewSection) previewSection.style.display = 'none';
+        if (initialState) initialState.style.display = 'block';
+        return;
+    }
+    
+    showLoader('Generating preview...');
+    
+    fetch(`../api/sync_records.php?table=${encodeURIComponent(tableName)}&source=${sourceDb}&target=${targetDb}`)
+        .then(response => response.json())
+        .then(data => {
+            hideLoader();
+            
+            if (data.success) {
+                window.syncPreviewData = data.data;
+                renderSyncPreview(data.data, sourceDb, targetDb);
+            } else {
+                showToast(data.message || 'Failed to generate preview', 'error');
+            }
+        })
+        .catch(error => {
+            hideLoader();
+            showToast('Error generating preview: ' + error.message, 'error');
+        });
+}
+
+/**
+ * Render sync preview with CREATE and UPDATE counts
+ */
+function renderSyncPreview(data, sourceDb, targetDb) {
+    const previewSection = document.getElementById('previewSection');
+    const initialState = document.getElementById('initialState');
+    
+    if (previewSection) {
+        previewSection.style.display = 'block';
+    }
+    if (initialState) {
+        initialState.style.display = 'none';
+    }
+    
+    // Update summary cards
+    const sourceRowsEl = document.getElementById('previewSourceRows');
+    const targetRowsEl = document.getElementById('previewTargetRows');
+    const createEl = document.getElementById('previewCreate');
+    const updateEl = document.getElementById('previewUpdate');
+    
+    if (sourceRowsEl) sourceRowsEl.textContent = data.counts.source;
+    if (targetRowsEl) targetRowsEl.textContent = data.counts.target;
+    if (createEl) createEl.textContent = data.sync_preview.create_count;
+    if (updateEl) updateEl.textContent = data.sync_preview.update_count;
+    
+    // Build preview tables
+    const container = document.getElementById('previewTables');
+    if (!container) return;
+    
+    let html = '';
+    const sourceName = sourceDb === 'db_a' ? 'DB A' : 'DB B';
+    const targetName = targetDb === 'db_a' ? 'DB A' : 'DB B';
+    
+    // CREATE Preview
+    if (data.sync_preview.create_count > 0) {
+        html += `
+            <div class="card mb-4 border-success">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="fas fa-plus-circle me-2"></i>CREATE Operations (${data.sync_preview.create_count} records)</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-success"><i class="fas fa-info-circle me-1"></i> These records exist in <strong>${sourceName}</strong> but NOT in <strong>${targetName}</strong></p>
+                    ${renderSyncPreviewTable(data.preview_rows.to_create, data.columns, 'create')}
+                </div>
+            </div>
+        `;
+    } else {
+        html += `
+            <div class="card mb-4 border-secondary">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0"><i class="fas fa-check-circle me-2"></i>CREATE Operations (0 records)</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-0">No new records to create. All records in source already exist in target.</p>
+                </div>
+            </div>
+        `;
+    }
+    
+    // UPDATE Preview
+    if (data.sync_preview.update_count > 0) {
+        html += `
+            <div class="card mb-4 border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="fas fa-edit me-2"></i>UPDATE Operations (${data.sync_preview.update_count} records)</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-warning"><i class="fas fa-info-circle me-1"></i> These records exist in <strong>BOTH</strong> databases but have <strong>different data</strong></p>
+                    ${renderSyncUpdatePreviewTable(data.preview_rows.to_update, data.columns)}
+                </div>
+            </div>
+        `;
+    } else {
+        html += `
+            <div class="card mb-4 border-secondary">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0"><i class="fas fa-check-circle me-2"></i>UPDATE Operations (0 records)</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-0">No records to update. All matching records have identical data.</p>
+                </div>
+            </div>
+        `;
+    }
+    
+    container.innerHTML = html;
+}
+
+/**
+ * Render preview table for CREATE operations
+ */
+function renderSyncPreviewTable(rows, columns, type) {
+    if (!rows || rows.length === 0) {
+        return '<div class="alert alert-info">No records to display.</div>';
+    }
+    
+    const displayColumns = columns.slice(0, 5);
+    const hasMore = columns.length > 5;
+    
+    let html = `
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped table-hover">
+                <thead class="table-dark">
+                    <tr>
+                        ${displayColumns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
+                        ${hasMore ? '<th>...</th>' : ''}
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    rows.forEach((row) => {
+        html += `<tr class="${type === 'create' ? 'table-success' : 'table-warning'}">`;
+        displayColumns.forEach(col => {
+            const value = row[col] !== undefined ? escapeHtml(String(row[col])) : '<em class="text-muted">NULL</em>';
+            html += `<td>${value}</td>`;
+        });
+        if (hasMore) {
+            html += `<td><em class="text-muted">+${columns.length - 5} more columns</em></td>`;
+        }
+        html += '</tr>';
+    });
+    
+    html += `</tbody></table></div>`;
+    
+    return html;
+}
+
+/**
+ * Render UPDATE preview with side-by-side comparison
+ */
+function renderSyncUpdatePreviewTable(rows, columns) {
+    if (!rows || rows.length === 0) {
+        return '<div class="alert alert-info">No records to display.</div>';
+    }
+    
+    const displayColumns = columns.slice(0, 5);
+    const hasMore = columns.length > 5;
+    const sourceDbSelect = document.getElementById('sourceDb');
+    const targetDbSelect = document.getElementById('targetDb');
+    const sourceName = sourceDbSelect?.options[sourceDbSelect?.selectedIndex]?.text || 'Source';
+    const targetName = targetDbSelect?.options[targetDbSelect?.selectedIndex]?.text || 'Target';
+    
+    let html = `
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped table-hover">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Column</th>
+                        <th class="bg-primary text-white">${escapeHtml(sourceName)}</th>
+                        <th class="bg-info text-white">${escapeHtml(targetName)}</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    rows.forEach((rowDiff, index) => {
+        const dataA = rowDiff.dataA;
+        const dataB = rowDiff.dataB;
+        
+        // Header row for this record
+        const pkValue = rowDiff.pk || 'N/A';
+        html += `<tr class="table-warning"><td colspan="3" class="text-center fw-bold">Record #${index + 1} (PK: ${escapeHtml(pkValue)})</td></tr>`;
+        
+        displayColumns.forEach(col => {
+            const valA = dataA[col] !== undefined ? escapeHtml(String(dataA[col])) : '<em class="text-muted">NULL</em>';
+            const valB = dataB[col] !== undefined ? escapeHtml(String(dataB[col])) : '<em class="text-muted">NULL</em>';
+            const isDifferent = String(dataA[col]) !== String(dataB[col]);
+            
+            html += `<tr>
+                <td>${escapeHtml(col)}</td>
+                <td class="${isDifferent ? 'bg-warning' : ''}">${valA}</td>
+                <td class="${isDifferent ? 'bg-warning' : ''}">${valB}</td>
+            </tr>`;
+        });
+        
+        if (hasMore) {
+            html += `<tr><td>...</td><td colspan="2" class="text-muted text-center">+${columns.length - 5} more columns</td></tr>`;
+        }
+    });
+    
+    html += `</tbody></table></div>`;
+    
+    return html;
+}
+
+/**
+ * Execute the sync operation
+ */
+function executeSync() {
+    if (!window.syncPreviewData) {
+        showToast('Please generate a preview first', 'warning');
+        return;
+    }
+    
+    const sourceDb = document.getElementById('sourceDb')?.value;
+    const targetDb = document.getElementById('targetDb')?.value;
+    const tableName = document.getElementById('tableSelect')?.value;
+    const createMissing = document.getElementById('optCreate')?.checked;
+    const updateExisting = document.getElementById('optUpdate')?.checked;
+    const dryRun = document.getElementById('optDryRun')?.checked;
+    
+    if (!createMissing && !updateExisting) {
+        showToast('Please select at least one sync option', 'warning');
+        return;
+    }
+    
+    const totalOps = (createMissing ? window.syncPreviewData.sync_preview.create_count : 0) + 
+                     (updateExisting ? window.syncPreviewData.sync_preview.update_count : 0);
+    
+    const confirmMsg = dryRun 
+        ? `This is a DRY RUN - no changes will be made.\n\nPreview: ${window.syncPreviewData.sync_preview.create_count} CREATE, ${window.syncPreviewData.sync_preview.update_count} UPDATE operations would be executed.\n\nContinue?`
+        : `This will ${createMissing ? 'CREATE ' + window.syncPreviewData.sync_preview.create_count + ' new records' : ''}${createMissing && updateExisting ? ' and ' : ''}${updateExisting ? 'UPDATE ' + window.syncPreviewData.sync_preview.update_count + ' existing records' : ''}.\n\nAre you sure you want to continue?`;
+    
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+    
+    // Show progress modal
+    const progressModal = document.getElementById('syncProgressModal');
+    if (progressModal) {
+        new bootstrap.Modal(progressModal).show();
+        updateSyncProgress(0, 'Starting sync...');
+    }
+    
+    fetch('../api/sync_records.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            table: tableName,
+            source_db: sourceDb,
+            target_db: targetDb,
+            options: {
+                create_missing: createMissing,
+                update_existing: updateExisting,
+                dry_run: dryRun
+            }
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoader();
+        
+        const modalEl = document.getElementById('syncProgressModal');
+        if (modalEl) {
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+        }
+        
+        if (data.success) {
+            const result = data.data;
+            const createSuccess = result.create.success;
+            const createFailed = result.create.failed;
+            const updateSuccess = result.update.success;
+            const updateFailed = result.update.failed;
+            
+            let msg = `Sync completed!\n`;
+            if (createMissing) {
+                msg += `CREATE: ${createSuccess} success${createFailed > 0 ? ', ' + createFailed + ' failed' : ''}\n`;
+            }
+            if (updateExisting) {
+                msg += `UPDATE: ${updateSuccess} success${updateFailed > 0 ? ', ' + updateFailed + ' failed' : ''}`;
+            }
+            
+            showToast(msg, createFailed + updateFailed > 0 ? 'warning' : 'success');
+            
+            // Refresh preview
+            previewSync();
+        } else {
+            showToast('Sync failed: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        hideLoader();
+        const modalEl = document.getElementById('syncProgressModal');
+        if (modalEl) {
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+        }
+        showToast('Sync error: ' + error.message, 'error');
+    });
+}
+
+/**
+ * Update sync progress bar
+ */
+function updateSyncProgress(percent, message) {
+    const bar = document.getElementById('syncProgressBar');
+    if (bar) {
+        bar.style.width = percent + '%';
+        bar.textContent = percent + '%';
+    }
+    const detailsEl = document.getElementById('syncProgressDetails');
+    if (detailsEl) {
+        detailsEl.innerHTML = message;
+    }
+}
+
+/**
+ * Load tables for sync dropdown
+ */
+function loadTablesForSync() {
+    showLoader('Loading tables...');
+    
+    fetch('../api/get_summary.php')
+        .then(response => response.json())
+        .then(data => {
+            hideLoader();
+            if (data.success && data.data) {
+                const select = document.getElementById('tableSelect');
+                if (select) {
+                    const tablesA = data.data.dbA?.tables || [];
+                    const tablesB = data.data.dbB?.tables || [];
+                    
+                    // Get common tables
+                    const commonTables = tablesA.filter(t => tablesB.includes(t));
+                    
+                    select.innerHTML = '<option value="">-- Select a table --</option>' +
+                        commonTables.map(table => `<option value="${escapeHtml(table)}">${escapeHtml(table)}</option>`).join('');
+                    
+                    window.commonTables = commonTables;
+                }
+            } else {
+                showToast('Failed to load tables', 'error');
+            }
+        })
+        .catch(error => {
+            hideLoader();
+            showToast('Error loading tables: ' + error.message, 'error');
+        });
+}
+
+
+window.executeSync = executeSync;
+window.loadTablesForSync = loadTablesForSync;
+window.updateSyncProgress = updateSyncProgress;
+window.renderSyncPreview = renderSyncPreview;
+window.selectAllTables = selectAllTables;
+window.selectNoneTables = selectNoneTables;
+window.toggleSelectAllTables = toggleSelectAllTables;
+window.updateSelectedCount = updateSelectedCount;
+window.formatNumber = formatNumber;
+

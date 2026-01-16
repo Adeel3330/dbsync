@@ -95,6 +95,9 @@ require_once 'templates/header.php';
                     <a href="pages/records.php" class="btn btn-success">
                         <i class="fas fa-list me-2"></i>Compare Records
                     </a>
+                    <a href="pages/sync.php" class="btn btn-warning">
+                        <i class="fas fa-sync-alt me-2"></i>Sync Records
+                    </a>
                     <a href="pages/table_detail.php" class="btn btn-info">
                         <i class="fas fa-search me-2"></i>View Table Details
                     </a>

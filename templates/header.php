@@ -45,6 +45,11 @@
                         </a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link <?php echo $currentPage === 'sync' ? 'active' : ''; ?>" href="../pages/sync.php">
+                            <i class="fas fa-sync-alt me-1"></i> Sync
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="nav-link <?php echo $currentPage === 'logs' ? 'active' : ''; ?>" href="../pages/logs.php">
                             <i class="fas fa-clipboard-list me-1"></i> Logs
                         </a>
@@ -94,7 +99,12 @@
                                 <i class="fas fa-list me-2"></i> Compare Records
                             </a>
                         </li>
-                    <li class="nav-item">
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $currentPage === 'sync' ? 'active' : ''; ?>" href="../pages/sync.php">
+                                <i class="fas fa-sync-alt me-2"></i> Sync Records
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link <?php echo $currentPage === 'table_detail' ? 'active' : ''; ?>" href="../pages/table_detail.php">
                                 <i class="fas fa-search me-2"></i> Table Details
                             </a>
