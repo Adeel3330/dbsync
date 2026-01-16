@@ -94,9 +94,14 @@
                                 <i class="fas fa-list me-2"></i> Compare Records
                             </a>
                         </li>
-                        <li class="nav-item">
+                    <li class="nav-item">
                             <a class="nav-link <?php echo $currentPage === 'table_detail' ? 'active' : ''; ?>" href="../pages/table_detail.php">
                                 <i class="fas fa-search me-2"></i> Table Details
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link <?php echo $currentPage === 'reports' ? 'active' : ''; ?>" href="../pages/reports.php">
+                                <i class="fas fa-file-alt me-2"></i> DBs Reports
                             </a>
                         </li>
                         <li class="nav-item">
