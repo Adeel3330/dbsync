@@ -1,0 +1,845 @@
+/**
+ * DB Sync - JavaScript Application
+ */
+
+// Global variables
+let currentPage = 'dashboard';
+let configModal = null;
+let insertModal = null;
+let pendingInsert = null;
+
+// Initialize on document ready
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize modals
+    configModal = new bootstrap.Modal(document.getElementById('configModal'));
+    insertModal = new bootstrap.Modal(document.getElementById('insertModal'));
+    
+    // Load initial config
+    loadConfig();
+    
+    // Check database connections
+    checkConnections();
+});
+
+// Show loader
+function showLoader(message = 'Processing...') {
+    document.getElementById('loaderText').textContent = message;
+    document.getElementById('globalLoader').style.display = 'flex';
+}
+
+// Hide loader
+function hideLoader() {
+    document.getElementById('globalLoader').style.display = 'none';
+}
+
+// Show toast notification
+function showToast(message, type = 'info') {
+    const toastContainer = document.querySelector('.toast-container');
+    const toastId = 'toast_' + Date.now();
+    
+    const bgClass = {
+        'success': 'bg-success',
+        'error': 'bg-danger',
+        'warning': 'bg-warning',
+        'info': 'bg-info'
+    }[type] || 'bg-info';
+    
+    const icon = {
+        'success': 'fa-check',
+        'error': 'fa-times',
+        'warning': 'fa-exclamation',
+        'info': 'fa-info'
+    }[type] || 'fa-info';
+    
+    const toastHTML = `
+        <div id="${toastId}" class="toast ${bgClass} text-white" role="alert">
+            <div class="toast-header ${bgClass} text-white">
+                <i class="fas ${icon} me-2"></i>
+                <strong class="me-auto">DB Sync</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body">${message}</div>
+        </div>
+    `;
+    
+    toastContainer.insertAdjacentHTML('beforeend', toastHTML);
+    const toast = new bootstrap.Toast(document.getElementById(toastId));
+    toast.show();
+    
+    // Remove after hidden
+    document.getElementById(toastId).addEventListener('hidden.bs.toast', function() {
+        this.remove();
+    });
+}
+
+// Show config modal
+function showConfigModal() {
+    configModal.show();
+}
+
+// Load configuration
+function loadConfig() {
+    fetch('../api/get_summary.php')
+        .then(response => response.json())
+        .then(data => {
+            // Config loaded silently
+        })
+        .catch(error => {
+            console.log('Config may need to be saved');
+        });
+}
+
+// Save configuration
+function saveConfig() {
+    const form = document.getElementById('configForm');
+    const formData = new FormData(form);
+    const config = {
+        db_a: {
+            host: formData.get('db_a[host]'),
+            name: formData.get('db_a[name]'),
+            username: formData.get('db_a[username]'),
+            password: formData.get('db_a[password]'),
+            port: parseInt(formData.get('db_a[port]')) || 3306
+        },
+        db_b: {
+            host: formData.get('db_b[host]'),
+            name: formData.get('db_b[name]'),
+            username: formData.get('db_b[username]'),
+            password: formData.get('db_b[password]'),
+            port: parseInt(formData.get('db_b[port]')) || 3306
+        }
+    };
+    
+    showLoader('Saving configuration...');
+    
+    fetch('../api/save_config.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(config)
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoader();
+        if (data.success) {
+            showToast('Configuration saved successfully', 'success');
+            configModal.hide();
+            checkConnections();
+        } else {
+            showToast(data.message || 'Failed to save configuration', 'error');
+        }
+    })
+    .catch(error => {
+        hideLoader();
+        showToast('Error saving configuration: ' + error.message, 'error');
+    });
+}
+
+// Test database connection
+function testConnection(dbKey) {
+    const resultId = dbKey === 'db_a' ? 'dbATestResult' : 'dbBTestResult';
+    const resultEl = document.getElementById(resultId);
+    
+    resultEl.innerHTML = '<div class="spinner-border spinner-border-sm text-primary" role="status"></div> Testing connection...';
+    
+    fetch('../api/test_connection.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ db_key: dbKey })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            resultEl.innerHTML = `<div class="alert alert-success py-2 mb-0"><i class="fas fa-check me-1"></i> ${data.message} (MySQL ${data.version})</div>`;
+            showToast(`${dbKey.toUpperCase()} connected successfully`, 'success');
+            checkConnections();
+        } else {
+            resultEl.innerHTML = `<div class="alert alert-danger py-2 mb-0"><i class="fas fa-times me-1"></i> ${data.message}</div>`;
+            showToast(`Connection failed for ${dbKey.toUpperCase()}`, 'error');
+        }
+    })
+    .catch(error => {
+        resultEl.innerHTML = `<div class="alert alert-danger py-2 mb-0"><i class="fas fa-times me-1"></i> Error: ${error.message}</div>`;
+    });
+}
+
+// Check database connections
+function checkConnections() {
+    Promise.all([
+        testConnectionSilent('db_a'),
+        testConnectionSilent('db_b')
+    ]).then(([statusA, statusB]) => {
+        updateConnectionStatus('dbAStatus', statusA);
+        updateConnectionStatus('dbBStatus', statusB);
+    });
+}
+
+// Test connection silently
+function testConnectionSilent(dbKey) {
+    return fetch('../api/test_connection.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ db_key: dbKey })
+    })
+    .then(response => response.json())
+    .then(data => {
+        return {
+            connected: data.success,
+            message: data.message,
+            version: data.version || null
+        };
+    })
+    .catch(() => {
+        return { connected: false, message: 'Connection failed' };
+    });
+}
+
+// Update connection status display
+function updateConnectionStatus(elementId, status) {
+    const el = document.getElementById(elementId);
+    if (status.connected) {
+        el.innerHTML = `<span class="connection-indicator connected"></span>Connected (${status.message})`;
+        el.classList.remove('text-muted');
+        el.classList.add('text-success');
+    } else {
+        el.innerHTML = `<span class="connection-indicator disconnected"></span>${status.message}`;
+        el.classList.remove('text-success');
+        el.classList.add('text-muted');
+    }
+}
+
+// Get dashboard summary
+function getDashboardSummary() {
+    showLoader('Loading summary...');
+    
+    fetch('../api/get_summary.php')
+        .then(response => response.json())
+        .then(data => {
+            hideLoader();
+            if (data.success) {
+                updateDashboardCards(data.data);
+            } else {
+                showToast(data.message || 'Failed to load summary', 'error');
+            }
+        })
+        .catch(error => {
+            hideLoader();
+            showToast('Error loading summary: ' + error.message, 'error');
+        });
+}
+
+// Update dashboard cards
+function updateDashboardCards(data) {
+    // Update DB A stats
+    document.getElementById('dbATables').textContent = data.dbA.tables;
+    document.getElementById('dbAConnected').textContent = data.dbA.connected ? 'Connected' : 'Disconnected';
+    
+    // Update DB B stats
+    document.getElementById('dbBTables').textContent = data.dbB.tables;
+    document.getElementById('dbBConnected').textContent = data.dbB.connected ? 'Connected' : 'Disconnected';
+    
+    // Update summary
+    document.getElementById('missingTables').textContent = data.summary.missingTables;
+    document.getElementById('matchedTables').textContent = data.summary.matchedTables;
+    document.getElementById('mismatchedTables').textContent = data.summary.mismatchedTables;
+    document.getElementById('totalDifferences').textContent = data.summary.totalDifferences;
+}
+
+// Compare structures
+function compareStructures() {
+    showLoader('Comparing structures...');
+    
+    const limit = document.getElementById('structureLimit')?.value || 100;
+    const offset = document.getElementById('structureOffset')?.value || 0;
+    
+    fetch(`../api/compare_structures.php?limit=${limit}&offset=${offset}`)
+        .then(response => response.json())
+        .then(data => {
+            hideLoader();
+            if (data.success) {
+                renderStructureComparison(data.data);
+            } else {
+                showToast(data.message || 'Failed to compare structures', 'error');
+            }
+        })
+        .catch(error => {
+            hideLoader();
+            showToast('Error comparing structures: ' + error.message, 'error');
+        });
+}
+
+// Render structure comparison
+function renderStructureComparison(data) {
+    const container = document.getElementById('structureResults');
+    if (!container) return;
+    
+    let html = '';
+    
+    // Missing in A
+    if (data.missingInA.length > 0) {
+        html += `
+            <div class="card mb-4 border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0"><i class="fas fa-exclamation-circle me-2"></i>Tables Missing in Database A (${data.missingInA.length})</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered mb-0">
+                            <thead class="table-dark"><tr><th>Table Name</th></tr></thead>
+                            <tbody>
+                                ${data.missingInA.map(table => `<tr class="row-missing"><td>${escapeHtml(table)}</td></tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Missing in B
+    if (data.missingInB.length > 0) {
+        html += `
+            <div class="card mb-4 border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0"><i class="fas fa-exclamation-circle me-2"></i>Tables Missing in Database B (${data.missingInB.length})</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered mb-0">
+                            <thead class="table-dark"><tr><th>Table Name</th></tr></thead>
+                            <tbody>
+                                ${data.missingInB.map(table => `<tr class="row-missing"><td>${escapeHtml(table)}</td></tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Structure differences
+    if (data.structureDifferences.length > 0) {
+        html += `
+            <div class="card mb-4 border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="fas fa-exclamation-triangle me-2"></i>Tables with Structural Differences (${data.structureDifferences.length})</h5>
+                </div>
+                <div class="card-body">
+        `;
+        
+        data.structureDifferences.forEach(diff => {
+            html += `
+                <div class="card mb-3">
+                    <div class="card-header bg-light">
+                        <strong>${escapeHtml(diff.tableName)}</strong>
+                    </div>
+                    <div class="card-body">
+            `;
+            
+            // Missing columns
+            if (diff.missingColumnsA.length > 0 || diff.missingColumnsB.length > 0) {
+                html += `
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6 class="text-danger">Missing in A:</h6>
+                            <ul class="list-unstyled mb-0">
+                                ${diff.missingColumnsA.map(col => `<li><code>${escapeHtml(col)}</code></li>`).join('')}
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-danger">Missing in B:</h6>
+                            <ul class="list-unstyled mb-0">
+                                ${diff.missingColumnsB.map(col => `<li><code>${escapeHtml(col)}</code></li>`).join('')}
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Column differences
+            if (Object.keys(diff.columnDifferences).length > 0) {
+                html += `
+                    <h6>Column Differences:</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-secondary">
+                                <tr>
+                                    <th>Column</th>
+                                    <th>Property</th>
+                                    <th>DB A</th>
+                                    <th>DB B</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                Object.entries(diff.columnDifferences).forEach(([colName, diffs]) => {
+                    Object.entries(diffs).forEach(([prop, values]) => {
+                        html += `
+                            <tr class="row-different">
+                                <td>${escapeHtml(colName)}</td>
+                                <td>${escapeHtml(prop)}</td>
+                                <td>${escapeHtml(String(values.a))}</td>
+                                <td>${escapeHtml(String(values.b))}</td>
+                            </tr>
+                        `;
+                    });
+                });
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            html += `</div></div>`;
+        });
+        
+        html += `</div></div>`;
+    }
+    
+    // Common tables
+    html += `
+        <div class="card mb-4 border-success">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0"><i class="fas fa-check-circle me-2"></i>Matching Tables (${data.commonTables.length})</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    ${data.commonTables.slice(0, 20).map(table => `
+                        <div class="col-md-3 col-sm-6 mb-2">
+                            <div class="badge bg-success w-100 py-2">${escapeHtml(table)}</div>
+                        </div>
+                    `).join('')}
+                    ${data.commonTables.length > 20 ? `<div class="col-12"><small class="text-muted">...and ${data.commonTables.length - 20} more</small></div>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html || '<div class="alert alert-info">No comparison data available. Please configure both databases first.</div>';
+}
+
+// Load tables for dropdown
+function loadTablesDropdown() {
+    showLoader('Loading tables...');
+    
+    fetch('../api/get_summary.php')
+        .then(response => response.json())
+        .then(data => {
+            hideLoader();
+            if (data.success) {
+                const select = document.getElementById('tableSelect');
+                if (select) {
+                    // Get common tables
+                    const tablesA = data.tablesA || [];
+                    const tablesB = data.tablesB || [];
+                    const commonTables = tablesA.filter(t => tablesB.includes(t));
+                    
+                    select.innerHTML = commonTables.map(table => 
+                        `<option value="${escapeHtml(table)}">${escapeHtml(table)}</option>`
+                    ).join('');
+                    
+                    // Trigger change to load data
+                    if (commonTables.length > 0) {
+                        select.dispatchEvent(new Event('change'));
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            hideLoader();
+            showToast('Error loading tables: ' + error.message, 'error');
+        });
+}
+
+// Compare records for selected table
+function compareRecordsForTable() {
+    const select = document.getElementById('tableSelect');
+    const tableName = select?.value;
+    
+    if (!tableName) return;
+    
+    showLoader('Comparing records...');
+    
+    fetch(`../api/compare_records.php?table=${encodeURIComponent(tableName)}`)
+        .then(response => response.json())
+        .then(data => {
+            hideLoader();
+            if (data.success) {
+                renderRecordComparison(data.data, tableName);
+            } else {
+                showToast(data.message || 'Failed to compare records', 'error');
+            }
+        })
+        .catch(error => {
+            hideLoader();
+            showToast('Error comparing records: ' + error.message, 'error');
+        });
+}
+
+// Render record comparison
+function renderRecordComparison(data, tableName) {
+    const container = document.getElementById('recordResults');
+    if (!container) return;
+    
+    // Update summary
+    document.getElementById('totalA').textContent = data.totalA;
+    document.getElementById('totalB').textContent = data.totalB;
+    document.getElementById('matched').textContent = data.matched;
+    document.getElementById('missingInA').textContent = data.missingInA;
+    document.getElementById('missingInB').textContent = data.missingInB;
+    document.getElementById('differentData').textContent = data.differentData;
+    
+    let html = `
+        <div class="alert alert-info mb-3">
+            <strong>Primary Keys:</strong> ${data.primaryKeys.join(', ')}
+        </div>
+    `;
+    
+    // Missing in A (exist in B but not in A)
+    if (data.missingInA > 0) {
+        html += `
+            <div class="card mb-4 border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0"><i class="fas fa-trash me-2"></i>Rows Missing in DB A (from DB B): ${data.missingInA}</h5>
+                </div>
+                <div class="card-body">
+                    <button class="btn btn-danger btn-sm mb-3" onclick="loadMissingRows('db_b', '${escapeHtml(tableName)}', 'db_a')">
+                        <i class="fas fa-download me-1"></i>Load & Insert to DB A
+                    </button>
+                    <div class="table-responsive" id="missingInAWrapper"></div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Missing in B (exist in A but not in B)
+    if (data.missingInB > 0) {
+        html += `
+            <div class="card mb-4 border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0"><i class="fas fa-trash me-2"></i>Rows Missing in DB B (from DB A): ${data.missingInB}</h5>
+                </div>
+                <div class="card-body">
+                    <button class="btn btn-danger btn-sm mb-3" onclick="loadMissingRows('db_a', '${escapeHtml(tableName)}', 'db_b')">
+                        <i class="fas fa-download me-1"></i>Load & Insert to DB B
+                    </button>
+                    <div class="table-responsive" id="missingInBWrapper"></div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Different data
+    if (data.differentData > 0) {
+        html += `
+            <div class="card mb-4 border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="fas fa-edit me-2"></i>Rows with Different Data: ${data.differentData}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive" id="differentDataWrapper"></div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Matched rows
+    html += `
+        <div class="card mb-4 border-success">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0"><i class="fas fa-check me-2"></i>Matching Rows: ${data.matched}</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-0">These rows have identical data in both databases.</p>
+            </div>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+}
+
+// Load missing rows
+function loadMissingRows(sourceDb, tableName, targetDb) {
+    showLoader('Loading missing rows...');
+    
+    fetch(`../api/get_missing_rows.php?source=${sourceDb}&table=${encodeURIComponent(tableName)}&target=${targetDb}`)
+        .then(response => response.json())
+        .then(data => {
+            hideLoader();
+            if (data.success) {
+                const wrapperId = sourceDb === 'db_a' ? 'missingInBWrapper' : 'missingInAWrapper';
+                renderMissingRowsTable(data.data, wrapperId, sourceDb, targetDb, tableName);
+            } else {
+                showToast(data.message || 'Failed to load missing rows', 'error');
+            }
+        })
+        .catch(error => {
+            hideLoader();
+            showToast('Error loading missing rows: ' + error.message, 'error');
+        });
+}
+
+// Render missing rows table
+function renderMissingRowsTable(rows, wrapperId, sourceDb, targetDb, tableName) {
+    const wrapper = document.getElementById(wrapperId);
+    if (!wrapper || rows.length === 0) {
+        wrapper.innerHTML = '<div class="alert alert-info">No rows found.</div>';
+        return;
+    }
+    
+    const columns = Object.keys(rows[0]);
+    
+    let html = `
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped table-hover">
+                <thead class="table-dark">
+                    <tr>
+                        ${columns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    rows.forEach((row, index) => {
+        html += `<tr class="row-missing">`;
+        columns.forEach(col => {
+            html += `<td>${escapeHtml(String(row[col] || 'NULL'))}</td>`;
+        });
+        html += `
+            <td>
+                <button class="btn btn-sm btn-success" onclick="prepareInsert('${sourceDb}', '${targetDb}', '${escapeHtml(tableName)}', ${index})">
+                    <i class="fas fa-plus me-1"></i>Insert
+                </button>
+            </td>
+        </tr>`;
+    });
+    
+    html += `</tbody></table></div>`;
+    wrapper.innerHTML = html;
+    
+    // Store rows globally for insert
+    window.missingRowsData = { rows, sourceDb, targetDb, tableName };
+}
+
+// Prepare insert
+function prepareInsert(sourceDb, targetDb, tableName, rowIndex) {
+    if (!window.missingRowsData || !window.missingRowsData.rows[rowIndex]) {
+        showToast('Row data not found', 'error');
+        return;
+    }
+    
+    const row = window.missingRowsData.rows[rowIndex];
+    
+    pendingInsert = {
+        sourceDb,
+        targetDb,
+        tableName,
+        rowData: row
+    };
+    
+    // Update modal
+    document.getElementById('insertSourceDb').textContent = sourceDb.toUpperCase();
+    document.getElementById('insertTargetDb').textContent = targetDb.toUpperCase();
+    
+    // Build table
+    const columns = Object.keys(row);
+    document.getElementById('insertRowHeader').innerHTML = columns.map(col => `<th>${escapeHtml(col)}</th>`).join('');
+    document.getElementById('insertRowBody').innerHTML = `
+        <tr>${columns.map(col => `<td>${escapeHtml(String(row[col] || 'NULL'))}</td>`).join('')}</tr>
+    `;
+    
+    insertModal.show();
+}
+
+// Confirm insert
+function confirmInsert() {
+    if (!pendingInsert) return;
+    
+    showLoader('Inserting row...');
+    
+    fetch('../api/insert_row.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            table: pendingInsert.tableName,
+            source_db: pendingInsert.sourceDb,
+            target_db: pendingInsert.targetDb,
+            row_data: pendingInsert.rowData
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoader();
+        insertModal.hide();
+        
+        if (data.success) {
+            showToast('Row inserted successfully!', 'success');
+            // Reload comparison
+            compareRecordsForTable();
+        } else {
+            showToast('Insert failed: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        hideLoader();
+        insertModal.hide();
+        showToast('Insert error: ' + error.message, 'error');
+    });
+    
+    pendingInsert = null;
+}
+
+// Export to CSV
+function exportToCSV(data, filename) {
+    if (!data || data.length === 0) {
+        showToast('No data to export', 'warning');
+        return;
+    }
+    
+    const columns = Object.keys(data[0]);
+    const csvContent = [
+        columns.join(','),
+        ...data.map(row => columns.map(col => {
+            const value = row[col] !== null ? String(row[col]) : '';
+            return `"${value.replace(/"/g, '""')}"`;
+        }).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename || 'export.csv';
+    link.click();
+    
+    showToast('Export completed', 'success');
+}
+
+// Escape HTML
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '<')
+        .replace(/>/g, '>')
+        .replace(/"/g, '"')
+        .replace(/'/g, '&#039;');
+}
+
+// Get logs
+function loadLogs() {
+    showLoader('Loading logs...');
+    
+    const limit = document.getElementById('logLimit')?.value || 100;
+    const type = document.getElementById('logType')?.value || '';
+    
+    fetch(`../api/get_logs.php?limit=${limit}&type=${encodeURIComponent(type)}`)
+        .then(response => response.json())
+        .then(data => {
+            hideLoader();
+            if (data.success) {
+                renderLogs(data.data);
+            } else {
+                showToast(data.message || 'Failed to load logs', 'error');
+            }
+        })
+        .catch(error => {
+            hideLoader();
+            showToast('Error loading logs: ' + error.message, 'error');
+        });
+}
+
+// Render logs
+function renderLogs(data) {
+    const container = document.getElementById('logsTable');
+    if (!container) return;
+    
+    // Update counts
+    document.getElementById('logTotal').textContent = data.counts.total;
+    document.getElementById('logErrors').textContent = data.counts.ERROR;
+    document.getElementById('logSuccess').textContent = data.counts.SUCCESS;
+    document.getElementById('logInfo').textContent = data.counts.INFO;
+    
+    if (data.logs.length === 0) {
+        container.innerHTML = '<div class="alert alert-info">No logs found.</div>';
+        return;
+    }
+    
+    let html = `
+        <table class="table table-bordered table-hover">
+            <thead class="table-dark">
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Type</th>
+                    <th>Message</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    data.logs.forEach(log => {
+        const typeClass = {
+            'ERROR': 'danger',
+            'SUCCESS': 'success',
+            'WARNING': 'warning',
+            'INFO': 'primary'
+        }[log.type] || 'secondary';
+        
+        html += `
+            <tr>
+                <td><small>${escapeHtml(log.timestamp)}</small></td>
+                <td><span class="badge bg-${typeClass}">${escapeHtml(log.type)}</span></td>
+                <td>${escapeHtml(log.message)}</td>
+            </tr>
+        `;
+    });
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+// Debounce function
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+    };
+}
+
+// Format bytes
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Export all functions for global use
+window.showLoader = showLoader;
+window.hideLoader = hideLoader;
+window.showToast = showToast;
+window.showConfigModal = showConfigModal;
+window.saveConfig = saveConfig;
+window.testConnection = testConnection;
+window.getDashboardSummary = getDashboardSummary;
+window.compareStructures = compareStructures;
+window.compareRecordsForTable = compareRecordsForTable;
+window.loadMissingRows = loadMissingRows;
+window.prepareInsert = prepareInsert;
+window.confirmInsert = confirmInsert;
+window.exportToCSV = exportToCSV;
+window.loadLogs = loadLogs;
+window.debounce = debounce;
+
