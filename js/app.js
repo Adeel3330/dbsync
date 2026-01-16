@@ -630,7 +630,7 @@ function renderRecordComparison(data, tableName) {
     window.recordComparisonData = data;
 }
 
-// Render rows table
+// Render rows table with checkboxes for bulk selection
 function renderRowsTable(rows, columns, sourceDb, targetDb, tableName, type) {
     console.log(rows)
     if (!rows || rows.length === 0) {
@@ -640,19 +640,30 @@ function renderRowsTable(rows, columns, sourceDb, targetDb, tableName, type) {
     const displayColumns = columns || Object.keys(rows[0]);
     
     let html = `
+        <div class="mb-3">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="selectAllMissing" onchange="toggleSelectAllMissing()">
+                <label class="form-check-label fw-bold" for="selectAllMissing">Select All</label>
+            </div>
+        </div>
         <div class="table-responsive">
             <table class="table table-bordered table-striped table-hover" id="missingRowsTable">
                 <thead class="table-dark">
                     <tr>
+                        <th width="40">
+                            <input type="checkbox" class="form-check-input" id="selectAllHeader" onchange="toggleSelectAll(this)">
+                        </th>
                         ${displayColumns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
-                        <th>Actions</th>
+                        <th width="100">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
     `;
     
     rows.forEach((row, index) => {
+        const rowId = `missing_row_${index}`;
         html += `<tr class="row-missing">`;
+        html += `<td><input type="checkbox" class="form-check-input row-checkbox" id="${rowId}" data-index="${index}"></td>`;
         displayColumns.forEach(col => {
             const value = row[col] !== undefined ? escapeHtml(String(row[col])) : '<em class="text-muted">NULL</em>';
             html += `<td>${value}</td>`;
@@ -667,9 +678,138 @@ function renderRowsTable(rows, columns, sourceDb, targetDb, tableName, type) {
     });
     
     html += `</tbody></table></div>`;
+    
+    // Add bulk insert button
+    html += `
+        <div class="mt-3">
+            <button class="btn btn-success" onclick="bulkInsertMissing('${sourceDb}', '${targetDb}', '${escapeHtml(tableName)}', '${type}')">
+                <i class="fas fa-plus-circle me-1"></i>Insert Selected Rows
+            </button>
+            <span class="text-muted ms-2" id="selectedCount">0 selected</span>
+        </div>
+    `;
+    
     console.log(html)
     
     return html;
+}
+
+// Toggle select all checkboxes
+function toggleSelectAll(sourceDb, targetDb, tableName, type) {
+    const checkbox = sourceDb; // This is actually the checkbox element
+    const table = checkbox.closest('table');
+    const checkboxes = table.querySelectorAll('.row-checkbox');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+    updateSelectedCount();
+}
+
+// Toggle select all from header checkbox
+function toggleSelectAllMissing() {
+    const headerCheckbox = document.getElementById('selectAllMissing');
+    const table = document.getElementById('missingRowsTable');
+    if (table) {
+        const checkboxes = table.querySelectorAll('.row-checkbox');
+        checkboxes.forEach(cb => cb.checked = headerCheckbox.checked);
+        updateSelectedCount();
+    }
+}
+
+// Update selected count
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('.row-checkbox:checked');
+    const countEl = document.getElementById('selectedCount');
+    if (countEl) {
+        countEl.textContent = `${checkboxes.length} selected`;
+    }
+}
+
+// Add event listeners for checkboxes
+document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('row-checkbox')) {
+            updateSelectedCount();
+        }
+    });
+});
+
+// Bulk insert missing rows
+function bulkInsertMissing(sourceDb, targetDb, tableName, type) {
+    if (!window.recordComparisonData) {
+        showToast('Comparison data not found', 'error');
+        return;
+    }
+    
+    // Get selected rows
+    const checkboxes = document.querySelectorAll('.row-checkbox:checked');
+    if (checkboxes.length === 0) {
+        showToast('Please select at least one row', 'warning');
+        return;
+    }
+    
+    // Collect selected row data
+    const selectedRows = [];
+    checkboxes.forEach(cb => {
+        const index = parseInt(cb.dataset.index);
+        let rowData;
+        if (type === 'missing') {
+            if (sourceDb === 'db_a') {
+                rowData = window.recordComparisonData.missingInB_rows[index];
+            } else {
+                rowData = window.recordComparisonData.missingInA_rows[index];
+            }
+        }
+        if (rowData) {
+            selectedRows.push(rowData);
+        }
+    });
+    
+    if (selectedRows.length === 0) {
+        showToast('No valid rows selected', 'error');
+        return;
+    }
+    
+    // Confirm bulk insert
+    if (!confirm(`Are you sure you want to insert ${selectedRows.length} rows from ${dbNames[sourceDb] || sourceDb} to ${dbNames[targetDb] || targetDb}?`)) {
+        return;
+    }
+    
+    // Perform bulk insert via API
+    showLoader(`Inserting ${selectedRows.length} rows...`);
+    
+    fetch('../api/insert_row.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            table: tableName,
+            source_db: sourceDb,
+            target_db: targetDb,
+            rows: selectedRows,
+            bulk: true
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideLoader();
+        
+        if (data.success) {
+            const successCount = data.data?.success?.length || 0;
+            const failedCount = data.data?.failed?.length || 0;
+            
+            showToast(`Inserted ${successCount} rows successfully${failedCount > 0 ? `, ${failedCount} failed` : ''}`, 
+                      failedCount > 0 ? 'warning' : 'success');
+            
+            // Reload comparison
+            compareRecordsForTable();
+        } else {
+            showToast('Insert failed: ' + data.message, 'error');
+        }
+    })
+    .catch(error => {
+        hideLoader();
+        showToast('Insert error: ' + error.message, 'error');
+    });
 }
 
 // Render different rows table (side by side comparison)

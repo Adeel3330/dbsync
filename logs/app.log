@@ -2,3 +2,5 @@
 [2026-01-16 07:18:33] [SUCCESS] Configuration saved successfully
 [2026-01-16 10:19:11] [INFO] Starting insert: tblnotces_courts from db_a to db_b | {"log_id":"log_696a109fed586","columns":["courts_id","court_name"]}
 [2026-01-16 10:19:11] [SUCCESS] Insert completed: tblnotces_courts | {"log_id":"log_696a109fed586","source":"db_a","target":"db_b"}
+[2026-01-16 10:36:45] [INFO] Starting bulk insert: tblnotces_courts (db_a → db_b) | {"log_id":"log_696a14bd94485","total_rows":1}
+[2026-01-16 10:36:45] [INFO] Bulk insert completed: 1 success, 0 failed | {"log_id":"log_696a14bd94485","table":"tblnotces_courts","success":1,"failed":0}
