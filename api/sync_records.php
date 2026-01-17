@@ -14,6 +14,7 @@ require_once dirname(__DIR__) . '/functions.php';
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 ini_set('memory_limit', '1024M');
+ini_set('max_ececution_time', '12340000');
 
 
 $response = [
