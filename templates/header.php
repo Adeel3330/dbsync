@@ -104,7 +104,7 @@
                                 <i class="fas fa-sync-alt me-2"></i> Sync Records
                             </a>
                         </li>
-                        <li class="nav-item">
+                        <!-- <li class="nav-item">
                             <a class="nav-link <?php echo $currentPage === 'table_detail' ? 'active' : ''; ?>" href="../pages/table_detail.php">
                                 <i class="fas fa-search me-2"></i> Table Details
                             </a>
@@ -113,7 +113,7 @@
                             <a class="nav-link <?php echo $currentPage === 'reports' ? 'active' : ''; ?>" href="../pages/reports.php">
                                 <i class="fas fa-file-alt me-2"></i> DBs Reports
                             </a>
-                        </li>
+                        </li> -->
                         <li class="nav-item">
                             <a class="nav-link <?php echo $currentPage === 'logs' ? 'active' : ''; ?>" href="../pages/logs.php">
                                 <i class="fas fa-history me-2"></i> Activity Logs
