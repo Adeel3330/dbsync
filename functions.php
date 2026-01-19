@@ -5,7 +5,8 @@
  */
 
 require_once __DIR__ . '/config/config.php';
-
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 /**
  * Test database connection
  */
@@ -257,7 +258,7 @@ function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys) {
         // Build MD5 hash of ALL column values (full row comparison)
         $hashCols = [];
         foreach ($columns as $col) {
-            $hashCols[] = "IFNULL(`{$col}`,'')";
+            $hashCols[] = "IFNULL(CONVERT(`{$col}` USING utf8mb4),'')";
         }
         
         // Use primary key for row identification

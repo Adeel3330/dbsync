@@ -225,7 +225,7 @@ function getDetailedRecordDifferences($dbKeyA, $dbKeyB, $tableName, $primaryKeys
         $first = true;
         foreach ($primaryKeys as $pk) {
             if (!$first) $pkHashCols .= ', ';
-            $pkHashCols .= "IFNULL(`{$pk}`,'')";
+            $pkHashCols .= "IFNULL(CONVERT(`{$pk}` USING utf8mb4),'')";
             $first = false;
         }
 
