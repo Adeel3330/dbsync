@@ -1,0 +1,18 @@
+{
+    "db_a": {
+        "host": "localhost",
+        "name": "cfms_circuit_courts",
+        "username": "root",
+        "password": "root",
+        "port": 3306,
+        "charset": "utf8mb4"
+    },
+    "db_b": {
+        "host": "localhost",
+        "name": "cfms_circuit_mirpur_new",
+        "username": "root",
+        "password": "root",
+        "port": 3306,
+        "charset": "utf8mb4"
+    }
+}

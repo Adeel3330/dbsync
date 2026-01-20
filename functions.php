@@ -1,587 +1,542 @@
 <?php
 /**
- * Database Comparison Functions
- * 
- * This file contains all the core functions for comparing databases,
- * tables, columns, and records. It provides modular functions that
- * can be used independently or through the web interface.
- * 
- * @package DBSync
- * @version 1.0.0
+ * Database Helper Functions
+ * Core utility functions for database comparison
  */
 
-require_once __DIR__ . '/config.php';
-
+require_once __DIR__ . '/config/config.php';
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 /**
- * Get all tables from a database
- * 
- * @param PDO $pdo PDO connection object
- * @return array List of table names
+ * Test database connection
  */
-function getTables(PDO $pdo) {
-    $stmt = $pdo->query("SHOW TABLES");
-    $tables = [];
-    while ($row = $stmt->fetch(PDO::FETCH_NUM)) {
-        $tables[] = $row[0];
-    }
-    return $tables;
-}
-
-/**
- * Get all columns for a specific table
- * 
- * @param PDO $pdo PDO connection object
- * @param string $tableName Table name
- * @return array Array of column definitions with name, type, nullability, etc.
- */
-function getTableColumns(PDO $pdo, $tableName) {
-    $stmt = $pdo->query("DESCRIBE `{$tableName}`");
-    $columns = [];
-    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        $columns[$row['Field']] = [
-            'name' => $row['Field'],
-            'type' => $row['Type'],
-            'null' => $row['Null'],
-            'key' => $row['Key'],
-            'default' => $row['Default'],
-            'extra' => $row['Extra']
+function testDatabaseConnection($dbKey) {
+    try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        
+        // Test query
+        $pdo->query("SELECT 1");
+        
+        // Get database info
+        $stmt = $pdo->query("SELECT VERSION() as version");
+        $version = $stmt->fetch()['version'];
+        
+        return [
+            'success' => true,
+            'message' => 'Connection successful',
+            'version' => $version
+        ];
+    } catch (Exception $e) {
+        return [
+            'success' => false,
+            'message' => $e->getMessage()
         ];
     }
-    return $columns;
 }
 
 /**
- * Get primary key columns for a table
- * 
- * @param PDO $pdo PDO connection object
- * @param string $tableName Table name
- * @return array List of primary key column names
+ * Get all tables from database
  */
-function getPrimaryKeyColumns(PDO $pdo, $tableName) {
-    $stmt = $pdo->query("DESCRIBE `{$tableName}`");
-    $pkColumns = [];
-    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        if ($row['Key'] === 'PRI') {
-            $pkColumns[] = $row['Field'];
-        }
+function getAllTables($dbKey) {
+    try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        $stmt = $pdo->query("SHOW TABLES");
+        $tables = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        return $tables;
+    } catch (Exception $e) {
+        return [];
     }
-    return $pkColumns;
 }
 
 /**
- * Get all data from a table with optional pagination
- * 
- * @param PDO $pdo PDO connection object
- * @param string $tableName Table name
- * @param int $limit Maximum number of rows
- * @param int $offset Offset for pagination
- * @return array Array of rows
+ * Get table count
  */
-function getTableData(PDO $pdo, $tableName, $limit = 0, $offset = 0) {
-    $sql = "SELECT * FROM `{$tableName}`";
-    if ($limit > 0) {
-        $sql .= " LIMIT " . intval($limit);
-        if ($offset > 0) {
-            $sql .= " OFFSET " . intval($offset);
-        }
+function getTableCount($dbKey) {
+    try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        $stmt = $pdo->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()");
+        return (int)$stmt->fetchColumn();
+    } catch (Exception $e) {
+        return 0;
     }
-    $stmt = $pdo->query($sql);
-    return $stmt->fetchAll();
 }
 
 /**
- * Count total rows in a table
- * 
- * @param PDO $pdo PDO connection object
- * @param string $tableName Table name
- * @return int Total row count
+ * Get table structure
  */
-function countTableRows(PDO $pdo, $tableName) {
-    $stmt = $pdo->query("SELECT COUNT(*) as cnt FROM `{$tableName}`");
-    $result = $stmt->fetch();
-    return (int)$result['cnt'];
-}
-
-/**
- * Compare tables between two databases
- * 
- * @param PDO $db1 Connection to database 1
- * @param PDO $db2 Connection to database 2
- * @return array Comparison results including missing tables
- */
-function compareTables(PDO $db1, PDO $db2) {
-    $tables1 = getTables($db1);
-    $tables2 = getTables($db2);
-    
-    $result = [
-        'tables_in_db1' => $tables1,
-        'tables_in_db2' => $tables2,
-        'missing_in_db2' => array_diff($tables1, $tables2),
-        'missing_in_db1' => array_diff($tables2, $tables1),
-        'common_tables' => array_intersect($tables1, $tables2)
-    ];
-    
-    return $result;
-}
-
-/**
- * Compare columns between two tables
- * 
- * @param PDO $db1 Connection to database 1
- * @param PDO $db2 Connection to database 2
- * @param string $tableName Table name to compare
- * @return array Column comparison results
- */
-function compareTableColumns(PDO $db1, PDO $db2, $tableName) {
-    $columns1 = getTableColumns($db1, $tableName);
-    $columns2 = getTableColumns($db2, $tableName);
-    
-    $result = [
-        'table_name' => $tableName,
-        'columns_db1' => $columns1,
-        'columns_db2' => $columns2,
-        'missing_in_db2' => [],
-        'missing_in_db1' => [],
-        'type_mismatches' => [],
-        'null_mismatches' => []
-    ];
-    
-    // Find missing columns
-    foreach ($columns1 as $name => $col) {
-        if (!isset($columns2[$name])) {
-            $result['missing_in_db2'][$name] = $col;
-        }
-    }
-    
-    foreach ($columns2 as $name => $col) {
-        if (!isset($columns1[$name])) {
-            $result['missing_in_db1'][$name] = $col;
-        }
-    }
-    
-    // Check for type and nullability mismatches in common columns
-    foreach ($columns1 as $name => $col1) {
-        if (isset($columns2[$name])) {
-            $col2 = $columns2[$name];
-            
-            // Compare types (normalize for comparison)
-            $type1 = strtolower(preg_replace('/\(.*\)/', '', $col1['type']));
-            $type2 = strtolower(preg_replace('/\(.*\)/', '', $col2['type']));
-            
-            if ($type1 !== $type2) {
-                $result['type_mismatches'][$name] = [
-                    'db1' => $col1['type'],
-                    'db2' => $col2['type']
-                ];
-            }
-            
-            // Compare nullability
-            if ($col1['null'] !== $col2['null']) {
-                $result['null_mismatches'][$name] = [
-                    'db1' => $col1['null'],
-                    'db2' => $col2['null']
-                ];
-            }
-        }
-    }
-    
-    return $result;
-}
-
-/**
- * Compare records between two tables
- * 
- * @param PDO $db1 Connection to database 1
- * @param PDO $db2 Connection to database 2
- * @param string $tableName Table name to compare
- * @param int $limit Maximum rows to compare (0 for all)
- * @param int $offset Offset for pagination
- * @return array Record comparison results
- */
-function compareTableRecords(PDO $db1, PDO $db2, $tableName, $limit = 0, $offset = 0) {
-    $pkColumns = getPrimaryKeyColumns($db1, $tableName);
-    
-    // If no primary key, use all columns
-    if (empty($pkColumns)) {
-        $pkColumns = array_keys(getTableColumns($db1, $tableName));
-    }
-    
-    $data1 = getTableData($db1, $tableName, $limit, $offset);
-    $data2 = getTableData($db2, $tableName, $limit, $offset);
-    
-    $result = [
-        'table_name' => $tableName,
-        'primary_key' => $pkColumns,
-        'db1_count' => count($data1),
-        'db2_count' => count($data2),
-        'missing_in_db2' => [],
-        'missing_in_db1' => [],
-        'different_rows' => [],
-        'identical_count' => 0
-    ];
-    
-    // Index data2 by primary key for fast lookup
-    $indexedData2 = [];
-    foreach ($data2 as $row) {
-        $pkValues = [];
-        foreach ($pkColumns as $pk) {
-            $pkValues[] = $row[$pk] ?? null;
-        }
-        $indexKey = implode('|||', $pkValues);
-        $indexedData2[$indexKey] = $row;
-    }
-    
-    // Compare data1 against data2
-    foreach ($data1 as $row1) {
-        $pkValues = [];
-        foreach ($pkColumns as $pk) {
-            $pkValues[] = $row1[$pk] ?? null;
-        }
-        $indexKey = implode('|||', $pkValues);
+function getTableStructure($dbKey, $tableName) {
+    try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        $stmt = $pdo->query("DESCRIBE `{$tableName}`");
+        $columns = $stmt->fetchAll();
         
-        if (!isset($indexedData2[$indexKey])) {
-            // Row exists in DB1 but not in DB2
-            $result['missing_in_db2'][$indexKey] = $row1;
-        } else {
-            // Compare the rows
-            $row2 = $indexedData2[$indexKey];
-            $diff = [];
-            foreach ($row1 as $col => $val1) {
-                $val2 = $row2[$col] ?? null;
-                if ($val1 !== $val2) {
-                    $diff[$col] = [
-                        'db1' => $val1,
-                        'db2' => $val2
-                    ];
-                }
+        // Get indexes
+        $indexStmt = $pdo->query("SHOW INDEX FROM `{$tableName}`");
+        $indexes = $indexStmt->fetchAll();
+        
+        return [
+            'columns' => $columns,
+            'indexes' => $indexes
+        ];
+    } catch (Exception $e) {
+        return null;
+    }
+}
+
+/**
+ * Get primary key columns
+ */
+function getPrimaryKeyColumns($dbKey, $tableName) {
+    try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        $stmt = $pdo->query("DESCRIBE `{$tableName}`");
+        $columns = $stmt->fetchAll();
+        
+        $pkColumns = [];
+        foreach ($columns as $column) {
+            if ($column['Key'] === 'PRI') {
+                $pkColumns[] = $column['Field'];
             }
-            if (!empty($diff)) {
-                $result['different_rows'][$indexKey] = [
-                    'primary_key' => array_combine($pkColumns, $pkValues),
-                    'differences' => $diff,
-                    'db1_row' => $row1,
-                    'db2_row' => $row2
+        }
+        
+        return $pkColumns;
+    } catch (Exception $e) {
+        return [];
+    }
+}
+
+/**
+ * Get table row count
+ */
+function getTableRowCount($dbKey, $tableName) {
+    try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        $stmt = $pdo->query("SELECT COUNT(*) FROM `{$tableName}`");
+        return (int)$stmt->fetchColumn();
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+/**
+ * Compare table structures
+ */
+function compareTableStructures($dbA, $dbB, $tablesA, $tablesB) {
+    $missingInA = array_diff($tablesB, $tablesA);
+    $missingInB = array_diff($tablesA, $tablesB);
+    $commonTables = array_intersect($tablesA, $tablesB);
+    
+    $structureDifferences = [];
+    
+    foreach ($commonTables as $table) {
+        $structA = getTableStructure($dbA, $table);
+        $structB = getTableStructure($dbB, $table);
+        
+        if (!$structA || !$structB) {
+            continue;
+        }
+        
+        $diff = compareStructureDetails($structA, $structB, $table);
+        if ($diff['hasDifference']) {
+            $structureDifferences[] = $diff;
+        }
+    }
+    
+    return [
+        'missingInA' => array_values($missingInA),
+        'missingInB' => array_values($missingInB),
+        'commonTables' => $commonTables,
+        'structureDifferences' => $structureDifferences
+    ];
+}
+
+/**
+ * Compare structure details
+ */
+function compareStructureDetails($structA, $structB, $tableName) {
+    $columnsA = [];
+    $columnsB = [];
+    
+    foreach ($structA['columns'] as $col) {
+        $columnsA[$col['Field']] = $col;
+    }
+    
+    foreach ($structB['columns'] as $col) {
+        $columnsB[$col['Field']] = $col;
+    }
+    
+    $missingColumnsA = array_diff(array_keys($columnsB), array_keys($columnsA));
+    $missingColumnsB = array_diff(array_keys($columnsA), array_keys($columnsB));
+    
+    $columnDifferences = [];
+    
+    foreach (array_intersect(array_keys($columnsA), array_keys($columnsB)) as $colName) {
+        $colA = $columnsA[$colName];
+        $colB = $columnsB[$colName];
+        
+        $diff = [];
+        if ($colA['Type'] !== $colB['Type']) {
+            $diff['type'] = ['a' => $colA['Type'], 'b' => $colB['Type']];
+        }
+        if ($colA['Null'] !== $colB['Null']) {
+            $diff['null'] = ['a' => $colA['Null'], 'b' => $colB['Null']];
+        }
+        if ($colA['Default'] !== $colB['Default']) {
+            $diff['default'] = ['a' => $colA['Default'], 'b' => $colB['Default']];
+        }
+        if ($colA['Extra'] !== $colB['Extra']) {
+            $diff['extra'] = ['a' => $colA['Extra'], 'b' => $colB['Extra']];
+        }
+        if ($colA['Key'] !== $colB['Key']) {
+            $diff['key'] = ['a' => $colA['Key'], 'b' => $colB['Key']];
+        }
+        
+        if (!empty($diff)) {
+            $columnDifferences[$colName] = $diff;
+        }
+    }
+    
+    return [
+        'tableName' => $tableName,
+        'hasDifference' => !empty($missingColumnsA) || !empty($missingColumnsB) || !empty($columnDifferences),
+        'missingColumnsA' => array_values($missingColumnsA),
+        'missingColumnsB' => array_values($missingColumnsB),
+        'columnDifferences' => $columnDifferences
+    ];
+}
+
+/**
+ * Get table data with pagination
+ */
+function getTableData($dbKey, $tableName, $limit = 100, $offset = 0, $orderBy = '', $orderDir = 'ASC') {
+    try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        
+        $sql = "SELECT * FROM `{$tableName}`";
+        
+        if (!empty($orderBy)) {
+            // Sanitize column name
+            $orderBy = preg_replace('/[^a-zA-Z0-9_]/', '', $orderBy);
+            $orderDir = strtoupper($orderDir) === 'DESC' ? 'DESC' : 'ASC';
+            $sql .= " ORDER BY `{$orderBy}` {$orderDir}";
+        }
+        
+        $sql .= " LIMIT {$limit} OFFSET {$offset}";
+        
+        $stmt = $pdo->query($sql);
+        return $stmt->fetchAll();
+    } catch (Exception $e) {
+        return [];
+    }
+}
+
+/**
+ * Get comparison data for records
+ * Compares rows based on FULL ROW DATA (not just primary key)
+ * Returns ALL matching/different records without limiting
+ */
+function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys) {
+    try {
+        $pdoA = DatabaseConnection::getConnection($dbKeyA);
+        $pdoB = DatabaseConnection::getConnection($dbKeyB);
+        
+        // Get total counts
+        $countA = getTableRowCount($dbKeyA, $tableName);
+        $countB = getTableRowCount($dbKeyB, $tableName);
+        
+        // Get all columns for the table
+        $structA = getTableStructure($dbKeyA, $tableName);
+        $columns = [];
+        foreach ($structA['columns'] as $col) {
+            $columns[] = $col['Field'];
+        }
+        
+        if (empty($columns)) {
+            throw new Exception('No columns found in table');
+        }
+        
+        // Build MD5 hash of ALL column values (full row comparison)
+        $hashCols = [];
+        foreach ($columns as $col) {
+            $hashCols[] = "IFNULL(CONVERT(`{$col}` USING utf8mb4),'')";
+        }
+        
+        // Use primary key for row identification
+        $pkSelectCols = [];
+        foreach ($primaryKeys as $pk) {
+            $pkSelectCols[] = "`{$pk}`";
+        }
+        
+        // Select ALL columns (not just PK) for insert/update operations
+        $allSelectCols = [];
+        foreach ($columns as $col) {
+            $allSelectCols[] = "`{$col}`";
+        }
+        
+        // Fetch all rows with full row hash from DB A
+        $rowListA = [];
+        $sqlA = "SELECT " . implode(', ', $allSelectCols) . ", MD5(CONCAT(" . implode(', ', $hashCols) . ")) as full_hash FROM `{$tableName}`";
+        $stmtA = $pdoA->query($sqlA);
+        while ($row = $stmtA->fetch()) {
+            $pkValues = [];
+            foreach ($primaryKeys as $pk) {
+                $pkValues[] = $row[$pk];
+            }
+            $pkKey = implode('_', $pkValues);
+            $rowListA[$pkKey] = [
+                'hash' => $row['full_hash'],
+                'data' => $row
+            ];
+        }
+        
+        // Fetch all rows with full row hash from DB B
+        $rowListB = [];
+        $sqlB = "SELECT " . implode(', ', $pkSelectCols) . ", MD5(CONCAT(" . implode(', ', $hashCols) . ")) as full_hash FROM `{$tableName}`";
+        $stmtB = $pdoB->query($sqlB);
+        while ($row = $stmtB->fetch()) {
+            $pkValues = [];
+            foreach ($primaryKeys as $pk) {
+                $pkValues[] = $row[$pk];
+            }
+            $pkKey = implode('_', $pkValues);
+            $rowListB[$pkKey] = [
+                'hash' => $row['full_hash'],
+                'data' => $row
+            ];
+        }
+        
+        // Find differences - compare by primary key existence AND full row data
+        $missingInA = [];
+        $missingInB = [];
+        $differentData = [];
+        $matched = [];
+        
+        foreach ($rowListA as $pk => $rowDataA) {
+            if (!isset($rowListB[$pk])) {
+                // Primary key exists in A but not in B
+                $missingInB[] = [
+                    'pk' => $pk,
+                    'data' => $rowDataA['data']
+                ];
+            } elseif ($rowDataA['hash'] !== $rowListB[$pk]['hash']) {
+                // Same primary key but different row data
+                $differentData[] = [
+                    'pk' => $pk,
+                    'dataA' => $rowDataA['data'],
+                    'dataB' => $rowListB[$pk]['data']
                 ];
             } else {
-                $result['identical_count']++;
+                // Exact match
+                $matched[] = $pk;
             }
-            unset($indexedData2[$indexKey]);
         }
-    }
-    
-    // Rows only in DB2 (missing in DB1)
-    foreach ($indexedData2 as $indexKey => $row2) {
-        $pkParts = explode('|||', $indexKey);
-        $result['missing_in_db1'][$indexKey] = $row2;
-    }
-    
-    return $result;
-}
-
-/**
- * Get complete comparison report for all tables
- * 
- * @param PDO $db1 Connection to database 1
- * @param PDO $db2 Connection to database 2
- * @param int $recordLimit Maximum records per table to compare (0 for all)
- * @return array Complete comparison report
- */
-function getFullComparisonReport(PDO $db1, PDO $db2, $recordLimit = 0) {
-    $tableComparison = compareTables($db1, $db2);
-    
-    $report = [
-        'generated_at' => date('Y-m-d H:i:s'),
-        'tables' => [
-            'in_db1' => $tableComparison['tables_in_db1'],
-            'in_db2' => $tableComparison['tables_in_db2'],
-            'missing_in_db2' => $tableComparison['missing_in_db2'],
-            'missing_in_db1' => $tableComparison['missing_in_db1'],
-            'common' => $tableComparison['common_tables']
-        ],
-        'table_details' => [],
-        'summary' => [
-            'total_tables_db1' => count($tableComparison['tables_in_db1']),
-            'total_tables_db2' => count($tableComparison['tables_in_db2']),
-            'missing_tables_db2' => count($tableComparison['missing_in_db2']),
-            'missing_tables_db1' => count($tableComparison['missing_in_db1']),
-            'total_missing_rows' => 0,
-            'total_different_rows' => 0,
-            'total_identical_rows' => 0
-        ]
-    ];
-    
-    // Compare each common table
-    foreach ($tableComparison['common_tables'] as $table) {
-        $columnCompare = compareTableColumns($db1, $db2, $table);
-        $recordCompare = compareTableRecords($db1, $db2, $table, $recordLimit);
         
-        $report['table_details'][$table] = [
-            'columns' => $columnCompare,
-            'records' => $recordCompare
+        foreach ($rowListB as $pk => $rowDataB) {
+            if (!isset($rowListA[$pk])) {
+                // Primary key exists in B but not in A
+                $missingInA[] = [
+                    'pk' => $pk,
+                    'data' => $rowDataB['data']
+                ];
+            }
+        }
+        
+        return [
+            'totalA' => $countA,
+            'totalB' => $countB,
+            'missingInA' => count($missingInA),
+            'missingInB' => count($missingInB),
+            'differentData' => count($differentData),
+            'matched' => count($matched),
+            'missingInA_rows' => $missingInA,
+            'missingInB_rows' => $missingInB,
+            'differentData_rows' => $differentData,
+            'primaryKeys' => $primaryKeys,
+            'columns' => $columns
         ];
-        
-        // Update summary
-        $report['summary']['total_missing_rows'] += count($recordCompare['missing_in_db2']);
-        $report['summary']['total_different_rows'] += count($recordCompare['different_rows']);
-        $report['summary']['total_identical_rows'] += $recordCompare['identical_count'];
+    } catch (Exception $e) {
+        return [
+            'error' => $e->getMessage(),
+            'totalA' => 0,
+            'totalB' => 0,
+            'missingInA' => 0,
+            'missingInB' => 0,
+            'differentData' => 0,
+            'matched' => 0
+        ];
     }
-    
-    return $report;
 }
 
 /**
- * Insert a single row from DB1 to DB2
- * 
- * @param PDO $db1 Source database connection
- * @param PDO $db2 Target database connection
- * @param string $tableName Table name
- * @param array $rowData Row data to insert
- * @return array Result with success status and message
+ * Get missing rows from a database
  */
-function insertRow(PDO $db1, PDO $db2, $tableName, $rowData) {
+function getMissingRows($dbKey, $tableName, $primaryKeys, $pkValues) {
     try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        
+        $whereConditions = [];
+        foreach ($primaryKeys as $idx => $pk) {
+            $pkValue = $pkValues[$idx];
+            $whereConditions[] = "`{$pk}` = " . $pdo->quote($pkValue);
+        }
+        
+        $sql = "SELECT * FROM `{$tableName}` WHERE " . implode(' AND ', $whereConditions);
+        $stmt = $pdo->query($sql);
+        return $stmt->fetch();
+    } catch (Exception $e) {
+        return null;
+    }
+}
+
+/**
+ * Insert row from one DB to another
+ */
+function insertRow($sourceDbKey, $targetDbKey, $tableName, $rowData) {
+    try {
+        $pdoTarget = DatabaseConnection::getConnection($targetDbKey);
+        
         $columns = array_keys($rowData);
         $placeholders = array_fill(0, count($columns), '?');
         
         $sql = "INSERT INTO `{$tableName}` (`" . implode('`, `', $columns) . "`) VALUES (" . implode(', ', $placeholders) . ")";
         
-        $stmt = $db2->prepare($sql);
-        $stmt->execute(array_values($rowData));
+        $stmt = $pdoTarget->prepare($sql);
+        $result = $stmt->execute(array_values($rowData));
         
         return [
             'success' => true,
-            'message' => 'Row inserted successfully',
-            'inserted_id' => $db2->lastInsertId(),
-            'row_data' => $rowData
+            'message' => 'Row inserted successfully'
         ];
-    } catch (PDOException $e) {
+    } catch (Exception $e) {
         return [
             'success' => false,
-            'message' => $e->getMessage(),
-            'error_code' => $e->getCode(),
-            'error_info' => $e->errorInfo ?? [],
-            'row_data' => $rowData
+            'message' => $e->getMessage()
         ];
     }
 }
 
 /**
- * Insert multiple rows from DB1 to DB2 with error handling
- * 
- * @param PDO $db1 Source database connection
- * @param PDO $db2 Target database connection
- * @param string $tableName Table name
- * @param array $rows Array of rows to insert
- * @return array Results for all insertions
+ * Log action
  */
-function insertMissingRows(PDO $db1, PDO $db2, $tableName, $rows) {
-    $results = [
-        'table' => $tableName,
-        'total' => count($rows),
-        'success' => 0,
-        'failed' => 0,
-        'errors' => [],
-        'inserted_ids' => []
-    ];
+function logAction($type, $message, $details = []) {
+    $logDir = __DIR__ . '/logs';
+    if (!is_dir($logDir)) {
+        mkdir($logDir, 0755, true);
+    }
     
-    foreach ($rows as $index => $row) {
-        $result = insertRow($db1, $db2, $tableName, $row);
-        if ($result['success']) {
-            $results['success']++;
-            $results['inserted_ids'][] = $result['inserted_id'];
-        } else {
-            $results['failed']++;
-            $results['errors'][] = [
-                'row_index' => $index,
-                'message' => $result['message'],
-                'error_code' => $result['error_code'],
-                'row_data' => $result['row_data']
+    $logFile = $logDir . '/app.log';
+    $timestamp = date('Y-m-d H:i:s');
+    $detailsStr = !empty($details) ? ' | ' . json_encode($details) : '';
+    
+    $logEntry = "[{$timestamp}] [{$type}] {$message}{$detailsStr}\n";
+    file_put_contents($logFile, $logEntry, FILE_APPEND);
+}
+
+/**
+ * Get logs
+ */
+function getLogs($limit = 100) {
+    $logFile = __DIR__ . '/logs/app.log';
+    
+    if (!file_exists($logFile)) {
+        return [];
+    }
+    
+    $logs = [];
+    $lines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    
+    $lines = array_slice($lines, -$limit);
+    
+    foreach (array_reverse($lines) as $line) {
+        if (preg_match('/\[(.*?)\] \[(.*?)\] (.*)/', $line, $matches)) {
+            $logs[] = [
+                'timestamp' => $matches[1],
+                'type' => $matches[2],
+                'message' => $matches[3]
             ];
         }
     }
     
-    $results['success_rate'] = $results['total'] > 0 
-        ? round(($results['success'] / $results['total']) * 100, 2) 
-        : 0;
-    
-    return $results;
+    return $logs;
 }
 
 /**
- * Detect and categorize common database errors
- * 
- * @param string $errorMessage Error message from PDO exception
- * @return array Error category and suggestions
+ * Get table summary
  */
-function categorizeError($errorMessage) {
-    $errorMessage = strtolower($errorMessage);
-    
-    // Primary key duplicate
-    if (strpos($errorMessage, 'duplicate entry') !== false && 
-        strpos($errorMessage, 'primary') !== false) {
+function getTableSummary($dbKey, $tableName) {
+    try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        
+        $stmt = $pdo->query("DESCRIBE `{$tableName}`");
+        $columns = $stmt->fetchAll();
+        
+        $rowCount = getTableRowCount($dbKey, $tableName);
+        
         return [
-            'category' => 'duplicate_primary_key',
-            'title' => 'Duplicate Primary Key',
-            'description' => 'A row with this primary key already exists in the target database.',
-            'severity' => 'high',
-            'suggestion' => 'Update the existing row instead of inserting, or check if you need to sync in reverse direction.'
+            'name' => $tableName,
+            'columns' => count($columns),
+            'rows' => $rowCount,
+            'size' => getTableSize($dbKey, $tableName)
         ];
+    } catch (Exception $e) {
+        return null;
     }
-    
-    // Foreign key constraint
-    if (strpos($errorMessage, 'foreign key') !== false || 
-        strpos($errorMessage, 'constraint') !== false) {
-        return [
-            'category' => 'foreign_key_constraint',
-            'title' => 'Foreign Key Constraint Violation',
-            'description' => 'Referenced record does not exist in the parent table.',
-            'severity' => 'high',
-            'suggestion' => 'Insert the parent record first, or disable foreign key checks temporarily (not recommended for production).'
-        ];
-    }
-    
-    // Data type mismatch
-    if (strpos($errorMessage, 'data too long') !== false ||
-        strpos($errorMessage, 'incorrect integer value') !== false ||
-        strpos($errorMessage, 'truncated') !== false) {
-        return [
-            'category' => 'data_type_mismatch',
-            'title' => 'Data Type Mismatch',
-            'description' => 'Data cannot be converted to the target column type.',
-            'severity' => 'medium',
-            'suggestion' => 'Check column types in both databases and ensure data compatibility.'
-        ];
-    }
-    
-    // Null constraint
-    if (strpos($errorMessage, 'null') !== false && 
-        strpos($errorMessage, 'cannot be null') !== false) {
-        return [
-            'category' => 'null_constraint',
-            'title' => 'NULL Constraint Violation',
-            'description' => 'Attempting to insert NULL into a NOT NULL column.',
-            'severity' => 'medium',
-            'suggestion' => 'Provide a default value or update the column to allow NULLs.'
-        ];
-    }
-    
-    // Unknown error
-    return [
-        'category' => 'unknown',
-        'title' => 'Unknown Error',
-        'description' => 'An unexpected error occurred during insertion.',
-        'severity' => 'medium',
-        'suggestion' => 'Review the error message and check database compatibility.'
-    ];
 }
 
 /**
- * Export comparison report to JSON format
- * 
- * @param array $report Comparison report array
- * @param bool $pretty Print with formatted JSON
- * @return string JSON string
+ * Get table size
  */
-function exportToJSON($report, $pretty = true) {
-    return $pretty 
-        ? json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-        : json_encode($report, JSON_UNESCAPED_UNICODE);
-}
-
-/**
- * Export comparison report to HTML format
- * 
- * @param array $report Comparison report array
- * @return string HTML string
- */
-function exportToHTML($report) {
-    ob_start();
-    ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Database Comparison Report</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .summary { background: #f5f5f5; padding: 15px; margin-bottom: 20px; }
-        .success { color: #28a745; }
-        .warning { color: #ffc107; }
-        .danger { color: #dc3545; }
-        table { border-collapse: collapse; width: 100%; margin-bottom: 15px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background: #007bff; color: white; }
-        .btn { display: inline-block; padding: 8px 16px; background: #007bff; color: white; text-decoration: none; }
-    </style>
-</head>
-<body>
-    <h1>Database Comparison Report</h1>
-    <p>Generated: <?php echo $report['generated_at']; ?></p>
-    
-    <div class="summary">
-        <h2>Summary</h2>
-        <p>Tables in DB1: <?php echo $report['summary']['total_tables_db1']; ?></p>
-        <p>Tables in DB2: <?php echo $report['summary']['total_tables_db2']; ?></p>
-        <p class="danger">Missing Tables in DB2: <?php echo $report['summary']['missing_tables_db2']; ?></p>
-        <p class="danger">Total Missing Rows: <?php echo $report['summary']['total_missing_rows']; ?></p>
-        <p class="warning">Total Different Rows: <?php echo $report['summary']['total_different_rows']; ?></p>
-        <p class="success">Total Identical Rows: <?php echo $report['summary']['total_identical_rows']; ?></p>
-    </div>
-</body>
-</html>
-    <?php
-    return ob_get_clean();
-}
-
-/**
- * Log sync action to file or database
- * 
- * @param string $action Action type (insert, update, delete, etc.)
- * @param string $table Table name
- * @param mixed $details Additional details
- * @param bool $success Whether action was successful
- * @return bool
- */
-function logSyncAction($action, $table, $details, $success = true) {
-    $logEntry = [
-        'timestamp' => date('Y-m-d H:i:s'),
-        'action' => $action,
-        'table' => $table,
-        'success' => $success,
-        'details' => $details
-    ];
-    
-    $logFile = __DIR__ . '/logs/sync_actions.log';
-    
-    // Create logs directory if it doesn't exist
-    if (!is_dir(__DIR__ . '/logs')) {
-        mkdir(__DIR__ . '/logs', 0755, true);
+function getTableSize($dbKey, $tableName) {
+    try {
+        $config = DatabaseConfig::load();
+        $dbName = $config[$dbKey]['name'];
+        
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        $stmt = $pdo->query("
+            SELECT (data_length + index_length) as size 
+            FROM information_schema.tables 
+            WHERE table_schema = '{$dbName}' AND table_name = '{$tableName}'
+        ");
+        $result = $stmt->fetch();
+        
+        if ($result) {
+            $size = $result['size'];
+            if ($size > 1048576) {
+                return round($size / 1048576, 2) . ' MB';
+            } elseif ($size > 1024) {
+                return round($size / 1024, 2) . ' KB';
+            }
+            return $size . ' B';
+        }
+        return 'Unknown';
+    } catch (Exception $e) {
+        return 'Unknown';
     }
-    
-    return file_put_contents(
-        $logFile, 
-        json_encode($logEntry, JSON_UNESCAPED_UNICODE) . "\n", 
-        FILE_APPEND | LOCK_EX
-    ) !== false;
 }
 
 /**
- * Sanitize table/column names for SQL queries
- * 
- * @param string $name Table or column name
- * @return string Sanitized name
+ * Sanitize input
  */
-function sanitizeName($name) {
-    return preg_replace('/[^a-zA-Z0-9_]/', '', $name);
+function sanitize($input) {
+    if (is_array($input)) {
+        return array_map('sanitize', $input);
+    }
+    return htmlspecialchars(strip_tags(trim($input)), ENT_QUOTES, 'UTF-8');
 }
 
 /**
- * Get formatted column type for display
- * 
- * @param string $type Raw type string from DESCRIBE
- * @return string Formatted type
+ * Validate database connection
  */
-function formatColumnType($type) {
-    return htmlspecialchars($type, ENT_QUOTES, 'UTF-8');
+function validateConnection($host, $port, $dbname, $username, $password) {
+    try {
+        $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4";
+        $pdo = new PDO($dsn, $username, $password, [
+            PDO::ATTR_TIMEOUT => 5,
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
+        ]);
+        return ['valid' => true];
+    } catch (PDOException $e) {
+        return ['valid' => false, 'error' => $e->getMessage()];
+    }
 }
+
