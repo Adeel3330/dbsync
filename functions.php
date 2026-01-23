@@ -392,28 +392,77 @@ function getMissingRows($dbKey, $tableName, $primaryKeys, $pkValues) {
 
 /**
  * Insert row from one DB to another
+ * Automatically excludes auto-increment columns to allow MySQL to generate new values
  */
 function insertRow($sourceDbKey, $targetDbKey, $tableName, $rowData) {
     try {
         $pdoTarget = DatabaseConnection::getConnection($targetDbKey);
         
-        $columns = array_keys($rowData);
+        // Get table structure to identify auto-increment columns
+        $autoIncrementColumns = getAutoIncrementColumns($targetDbKey, $tableName);
+        
+        // Filter out auto-increment columns from the insert
+        $columns = [];
+        $values = [];
+        
+        foreach ($rowData as $col => $val) {
+            // Skip auto-increment columns (MySQL will auto-generate these)
+            if (in_array($col, $autoIncrementColumns)) {
+                continue;
+            }
+            $columns[] = $col;
+            $values[] = $val;
+        }
+        
+        if (empty($columns)) {
+            return [
+                'success' => false,
+                'message' => 'No columns to insert (all columns are auto-increment)'
+            ];
+        }
+        
         $placeholders = array_fill(0, count($columns), '?');
         
         $sql = "INSERT INTO `{$tableName}` (`" . implode('`, `', $columns) . "`) VALUES (" . implode(', ', $placeholders) . ")";
         
         $stmt = $pdoTarget->prepare($sql);
-        $result = $stmt->execute(array_values($rowData));
+        $result = $stmt->execute($values);
+        
+        // Get the auto-generated ID if available
+        $insertId = $pdoTarget->lastInsertId();
         
         return [
             'success' => true,
-            'message' => 'Row inserted successfully'
+            'message' => 'Row inserted successfully',
+            'insert_id' => $insertId
         ];
     } catch (Exception $e) {
         return [
             'success' => false,
             'message' => $e->getMessage()
         ];
+    }
+}
+
+/**
+ * Get auto-increment columns for a table
+ */
+function getAutoIncrementColumns($dbKey, $tableName) {
+    try {
+        $pdo = DatabaseConnection::getConnection($dbKey);
+        $stmt = $pdo->query("DESCRIBE `{$tableName}`");
+        $columns = $stmt->fetchAll();
+        
+        $autoIncColumns = [];
+        foreach ($columns as $column) {
+            if ($column['Extra'] === 'auto_increment') {
+                $autoIncColumns[] = $column['Field'];
+            }
+        }
+        
+        return $autoIncColumns;
+    } catch (Exception $e) {
+        return [];
     }
 }
 
