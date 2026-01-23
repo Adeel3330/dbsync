@@ -1401,119 +1401,127 @@ function renderSyncUpdatePreviewTable(rows, columns) {
     return html;
 }
 
+// Helper function to properly hide modal and cleanup
+function hideSyncModal() {
+    const modalEl = document.getElementById('syncProgressModal');
+    if (modalEl) {
+        const modal = bootstrap.Modal.getInstance(modalEl);
+        if (modal) {
+            modal.hide();
+        }
+        // Remove any remaining backdrops
+        const backdrops = document.querySelectorAll('.modal-backdrop');
+        backdrops.forEach(bp => bp.remove());
+        // Remove body modal classes
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+    }
+    hideLoader();
+}
+
 /**
  * Execute the sync operation
  */
-function executeSync() {
-    if (!window.syncPreviewData) {
-        showToast('Please generate a preview first', 'warning');
-        return;
-    }
+// function executeSync() {
+//     if (!window.syncPreviewData) {
+//         showToast('Please generate a preview first', 'warning');
+//         return;
+//     }
     
-    const sourceDb = document.getElementById('sourceDb')?.value;
-    const targetDb = document.getElementById('targetDb')?.value;
-    const tableName = document.getElementById('tableSelect')?.value;
-    const createMissing = document.getElementById('optCreate')?.checked;
-    const updateExisting = document.getElementById('optUpdate')?.checked;
-    const dryRun = document.getElementById('optDryRun')?.checked;
+//     const sourceDb = document.getElementById('sourceDb')?.value;
+//     const targetDb = document.getElementById('targetDb')?.value;
+//     const tableName = document.getElementById('tableSelect')?.value;
+//     const createMissing = document.getElementById('optCreate')?.checked;
+//     const updateExisting = document.getElementById('optUpdate')?.checked;
+//     const dryRun = document.getElementById('optDryRun')?.checked;
     
-    if (!createMissing && !updateExisting) {
-        showToast('Please select at least one sync option', 'warning');
-        return;
-    }
+//     if (!createMissing && !updateExisting) {
+//         showToast('Please select at least one sync option', 'warning');
+//         return;
+//     }
     
-    const totalOps = (createMissing ? window.syncPreviewData.sync_preview.create_count : 0) + 
-                     (updateExisting ? window.syncPreviewData.sync_preview.update_count : 0);
+//     const totalOps = (createMissing ? window.syncPreviewData.sync_preview.create_count : 0) + 
+//                      (updateExisting ? window.syncPreviewData.sync_preview.update_count : 0);
     
-    const confirmMsg = dryRun 
-        ? `This is a DRY RUN - no changes will be made.\n\nPreview: ${window.syncPreviewData.sync_preview.create_count} CREATE, ${window.syncPreviewData.sync_preview.update_count} UPDATE operations would be executed.\n\nContinue?`
-        : `This will ${createMissing ? 'CREATE ' + window.syncPreviewData.sync_preview.create_count + ' new records' : ''}${createMissing && updateExisting ? ' and ' : ''}${updateExisting ? 'UPDATE ' + window.syncPreviewData.sync_preview.update_count + ' existing records' : ''}.\n\nAre you sure you want to continue?`;
+//     const confirmMsg = dryRun 
+//         ? `This is a DRY RUN - no changes will be made.\n\nPreview: ${window.syncPreviewData.sync_preview.create_count} CREATE, ${window.syncPreviewData.sync_preview.update_count} UPDATE operations would be executed.\n\nContinue?`
+//         : `This will ${createMissing ? 'CREATE ' + window.syncPreviewData.sync_preview.create_count + ' new records' : ''}${createMissing && updateExisting ? ' and ' : ''}${updateExisting ? 'UPDATE ' + window.syncPreviewData.sync_preview.update_count + ' existing records' : ''}.\n\nAre you sure you want to continue?`;
     
-    if (!confirm(confirmMsg)) {
-        return;
-    }
+//     if (!confirm(confirmMsg)) {
+//         return;
+//     }
     
-    // Show progress modal
-    const progressModal = document.getElementById('syncProgressModal');
-    if (progressModal) {
-        new bootstrap.Modal(progressModal).show();
-        updateSyncProgress(0, 'Starting sync...');
-    }
+//     // Show progress modal
+//     const progressModal = document.getElementById('syncProgressModal');
+//     if (progressModal) {
+//         new bootstrap.Modal(progressModal).show();
+//         updateSyncProgress(0, 'Starting sync...');
+//     }
     
-    fetch('../api/sync_records.php', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            table: tableName,
-            source_db: sourceDb,
-            target_db: targetDb,
-            options: {
-                create_missing: createMissing,
-                update_existing: updateExisting,
-                dry_run: dryRun
-            }
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        hideLoader();
+//     fetch('../api/sync_records.php', {
+//         method: 'POST',
+//         headers: {
+//             'Content-Type': 'application/json'
+//         },
+//         body: JSON.stringify({
+//             table: tableName,
+//             source_db: sourceDb,
+//             target_db: targetDb,
+//             options: {
+//                 create_missing: createMissing,
+//                 update_existing: updateExisting,
+//                 dry_run: dryRun
+//             }
+//         })
+//     })
+//     .then(response => response.json())
+//     .then(data => {
+//         hideSyncModal();
         
-        const modalEl = document.getElementById('syncProgressModal');
-        if (modalEl) {
-            const modal = bootstrap.Modal.getInstance(modalEl);
-            if (modal) modal.hide();
-        }
-        
-        if (data.success) {
-            const result = data.data;
-            const createSuccess = result.create.success;
-            const createFailed = result.create.failed;
-            const updateSuccess = result.update.success;
-            const updateFailed = result.update.failed;
+//         if (data.success) {
+//             const result = data.data;
+//             const createSuccess = result.create.success;
+//             const createFailed = result.create.failed;
+//             const updateSuccess = result.update.success;
+//             const updateFailed = result.update.failed;
             
-            let msg = `Sync completed!\n`;
-            if (createMissing) {
-                msg += `CREATE: ${createSuccess} success${createFailed > 0 ? ', ' + createFailed + ' failed' : ''}\n`;
-            }
-            if (updateExisting) {
-                msg += `UPDATE: ${updateSuccess} success${updateFailed > 0 ? ', ' + updateFailed + ' failed' : ''}`;
-            }
+//             let msg = `Sync completed!\n`;
+//             if (createMissing) {
+//                 msg += `CREATE: ${createSuccess} success${createFailed > 0 ? ', ' + createFailed + ' failed' : ''}\n`;
+//             }
+//             if (updateExisting) {
+//                 msg += `UPDATE: ${updateSuccess} success${updateFailed > 0 ? ', ' + updateFailed + ' failed' : ''}`;
+//             }
             
-            showToast(msg, createFailed + updateFailed > 0 ? 'warning' : 'success');
+//             showToast(msg, createFailed + updateFailed > 0 ? 'warning' : 'success');
             
-            // Refresh preview
-            previewSync();
-        } else {
-            showToast('Sync failed: ' + data.message, 'error');
-        }
-    })
-    .catch(error => {
-        hideLoader();
-        const modalEl = document.getElementById('syncProgressModal');
-        if (modalEl) {
-            const modal = bootstrap.Modal.getInstance(modalEl);
-            if (modal) modal.hide();
-        }
-        showToast('Sync error: ' + error.message, 'error');
-    });
-}
+//             // Refresh preview
+//             previewSync();
+//         } else {
+//             showToast('Sync failed: ' + data.message, 'error');
+//         }
+//     })
+//     .catch(error => {
+//         hideSyncModal();
+//         showToast('Sync error: ' + error.message, 'error');
+//     });
+// }
 
 /**
  * Update sync progress bar
  */
-function updateSyncProgress(percent, message) {
-    const bar = document.getElementById('syncProgressBar');
-    if (bar) {
-        bar.style.width = percent + '%';
-        bar.textContent = percent + '%';
-    }
-    const detailsEl = document.getElementById('syncProgressDetails');
-    if (detailsEl) {
-        detailsEl.innerHTML = message;
-    }
-}
+// function updateSyncProgress(percent, message) {
+//     const bar = document.getElementById('syncProgressBar');
+//     if (bar) {
+//         bar.style.width = percent + '%';
+//         bar.textContent = percent + '%';
+//     }
+//     const detailsEl = document.getElementById('syncProgressDetails');
+//     if (detailsEl) {
+//         detailsEl.innerHTML = message;
+//     }
+// }
 
 /**
  * Load tables for sync dropdown
@@ -1550,9 +1558,9 @@ function loadTablesForSync() {
 }
 
 
-window.executeSync = executeSync;
+// window.executeSync = executeSync;
 window.loadTablesForSync = loadTablesForSync;
-window.updateSyncProgress = updateSyncProgress;
+// window.updateSyncProgress = updateSyncProgress;
 window.renderSyncPreview = renderSyncPreview;
 window.selectAllTables = selectAllTables;
 window.selectNoneTables = selectNoneTables;
