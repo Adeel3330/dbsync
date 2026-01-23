@@ -232,8 +232,10 @@ function getTableData($dbKey, $tableName, $limit = 100, $offset = 0, $orderBy = 
 
 /**
  * Get comparison data for records
- * Compares rows based on FULL ROW DATA (not just primary key)
+ * Compares rows based on FULL ROW DATA (including primary key)
  * Returns ALL matching/different records without limiting
+ * 
+ * @deprecated Use compareRecordsByNonPK() for deduplication sync
  */
 function compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys) {
     try {
@@ -537,6 +539,143 @@ function validateConnection($host, $port, $dbname, $username, $password) {
         return ['valid' => true];
     } catch (PDOException $e) {
         return ['valid' => false, 'error' => $e->getMessage()];
+    }
+}
+
+/**
+ * Get comparison data for records by NON-PRIMARY KEY columns
+ * Compares rows based on DATA ONLY (excluding primary key)
+ * Used for deduplication sync - skips records where non-PK data already exists
+ *
+ * @param string $dbKeyA Source database key
+ * @param string $dbKeyB Target database key
+ * @param string $tableName Table name to compare
+ * @param array $primaryKeys Primary key column names
+ * @return array Comparison results with categorized records
+ */
+function compareRecordsByNonPK($dbKeyA, $dbKeyB, $tableName, $primaryKeys) {
+    try {
+        $pdoA = DatabaseConnection::getConnection($dbKeyA);
+        $pdoB = DatabaseConnection::getConnection($dbKeyB);
+        
+        // Get total counts
+        $countA = getTableRowCount($dbKeyA, $tableName);
+        $countB = getTableRowCount($dbKeyB, $tableName);
+        
+        // Get all columns for the table
+        $structA = getTableStructure($dbKeyA, $tableName);
+        $columns = [];
+        foreach ($structA['columns'] as $col) {
+            $columns[] = $col['Field'];
+        }
+        
+        if (empty($columns)) {
+            throw new Exception('No columns found in table');
+        }
+        
+        // Separate PK columns from non-PK columns
+        $pkColumns = array_flip($primaryKeys);
+        $nonPkColumns = array_diff($columns, $primaryKeys);
+        
+        if (empty($nonPkColumns)) {
+            // If no non-PK columns, fall back to comparing by PK only
+            return compareRecords($dbKeyA, $dbKeyB, $tableName, $primaryKeys);
+        }
+        
+        // Build MD5 hash of NON-PRIMARY KEY column values only (data deduplication)
+        $hashCols = [];
+        foreach ($nonPkColumns as $col) {
+            $hashCols[] = "IFNULL(CONVERT(`{$col}` USING utf8mb4),'')";
+        }
+        
+        // Select ALL columns for insert operations (including PK for identification)
+        $allSelectCols = [];
+        foreach ($columns as $col) {
+            $allSelectCols[] = "`{$col}`";
+        }
+        
+        // Fetch all rows with non-PK data hash from DB A (source)
+        $rowListA = [];
+        $sqlA = "SELECT " . implode(', ', $allSelectCols) . ", MD5(CONCAT(" . implode(', ', $hashCols) . ")) as data_hash FROM `{$tableName}`";
+        $stmtA = $pdoA->query($sqlA);
+        while ($row = $stmtA->fetch()) {
+            $pkValues = [];
+            foreach ($primaryKeys as $pk) {
+                $pkValues[] = $row[$pk];
+            }
+            $pkKey = implode('_', $pkValues);
+            $rowListA[$pkKey] = [
+                'data_hash' => $row['data_hash'],
+                'data' => $row
+            ];
+        }
+        
+        // Fetch all rows with non-PK data hash from DB B (target)
+        $rowListB = [];
+        $sqlB = "SELECT " . implode(', ', $allSelectCols) . ", MD5(CONCAT(" . implode(', ', $hashCols) . ")) as data_hash FROM `{$tableName}`";
+        $stmtB = $pdoB->query($sqlB);
+        while ($row = $stmtB->fetch()) {
+            $pkValues = [];
+            foreach ($primaryKeys as $pk) {
+                $pkValues[] = $row[$pk];
+            }
+            $pkKey = implode('_', $pkValues);
+            $rowListB[$pkKey] = [
+                'data_hash' => $row['data_hash'],
+                'data' => $row
+            ];
+        }
+        
+        // Build a lookup by data hash (excluding PK) for deduplication
+        $targetHashes = [];
+        foreach ($rowListB as $pk => $rowDataB) {
+            $targetHashes[$rowDataB['data_hash']] = true;
+        }
+        
+        // Categorize rows from source (DB A)
+        $missingInB = [];      // Records in A but not in B (by non-PK data) - need CREATE
+        $alreadyExist = [];    // Records in A with same non-PK data in B - skip (duplicate)
+        
+        foreach ($rowListA as $pk => $rowDataA) {
+            if (!isset($targetHashes[$rowDataA['data_hash']])) {
+                // Non-PK data doesn't exist in target - need to CREATE
+                $missingInB[] = [
+                    'pk' => $pk,
+                    'data' => $rowDataA['data']
+                ];
+            } else {
+                // Non-PK data already exists in target - skip (duplicate)
+                $alreadyExist[] = [
+                    'pk' => $pk,
+                    'data' => $rowDataA['data']
+                ];
+            }
+        }
+        
+        return [
+            'totalA' => $countA,
+            'totalB' => $countB,
+            'missingInA' => 0,  // Not relevant for this sync mode
+            'missingInB' => count($missingInB),  // Records to CREATE
+            'differentData' => 0,  // No UPDATE operations in this mode
+            'matched' => count($alreadyExist),
+            'missingInB_rows' => $missingInB,  // Rows to insert
+            'alreadyExist_rows' => $alreadyExist,  // Rows that will be skipped
+            'primaryKeys' => $primaryKeys,
+            'columns' => $columns,
+            'nonPkColumns' => array_values($nonPkColumns),
+            'sync_mode' => 'deduplication'  // Indicates this is deduplication mode
+        ];
+    } catch (Exception $e) {
+        return [
+            'error' => $e->getMessage(),
+            'totalA' => 0,
+            'totalB' => 0,
+            'missingInA' => 0,
+            'missingInB' => 0,
+            'differentData' => 0,
+            'matched' => 0
+        ];
     }
 }
 
