@@ -161,6 +161,7 @@ echo json_encode($response);
 
 /**
  * Get preview of what would be synced for a single table
+ * Uses deduplication mode: compares by non-PK columns only
  */
 function getSyncPreview($sourceDb, $targetDb, $tableName) {
     // Get primary keys
@@ -179,8 +180,8 @@ function getSyncPreview($sourceDb, $targetDb, $tableName) {
     $countSource = getTableRowCount($sourceDb, $tableName);
     $countTarget = getTableRowCount($targetDb, $tableName);
     
-    // Get comparison data
-    $comparison = compareRecords($sourceDb, $targetDb, $tableName, $primaryKeys);
+    // Get comparison data using deduplication mode (compare by non-PK columns)
+    $comparison = compareRecordsByNonPK($sourceDb, $targetDb, $tableName, $primaryKeys);
     
     if (isset($comparison['error'])) {
         throw new Exception($comparison['error']);
@@ -190,24 +191,33 @@ function getSyncPreview($sourceDb, $targetDb, $tableName) {
     $struct = getTableStructure($sourceDb, $tableName);
     $columns = array_column($struct['columns'], 'Field');
     
+    // Deduplication mode: CREATE only, no UPDATE
+    $createCount = $comparison['missingInB'];
+    $updateCount = 0; // No updates in deduplication mode
+    $skipCount = $comparison['matched'];
+    
     return [
         'table' => $tableName,
         'source_db' => $sourceDb,
         'target_db' => $targetDb,
         'primary_keys' => $primaryKeys,
         'columns' => $columns,
+        'non_pk_columns' => $comparison['nonPkColumns'] ?? [],
         'counts' => [
             'source' => $countSource,
             'target' => $countTarget
         ],
+        'sync_mode' => 'deduplication',
         'sync_preview' => [
-            'create_count' => $comparison['missingInB'], // Records in A not in B (CREATE)
-            'update_count' => $comparison['differentData'], // Records in both but different (UPDATE)
-            'unchanged_count' => $comparison['matched']
+            'create_count' => $createCount,     // Records with new non-PK data (CREATE)
+            'update_count' => $updateCount,     // 0 in deduplication mode
+            'skip_count' => $skipCount,         // Records with existing non-PK data (skip)
+            'unchanged_count' => $skipCount
         ],
         'preview_rows' => [
             'to_create' => array_slice($comparison['missingInB_rows'], 0, 5),
-            'to_update' => array_slice($comparison['differentData_rows'], 0, 5)
+            'to_update' => [],                  // No updates in deduplication mode
+            'skipped' => array_slice($comparison['alreadyExist_rows'] ?? [], 0, 5)
         ]
     ];
 }
@@ -310,19 +320,21 @@ function executeMultiTableSync($sourceDb, $targetDb, $tableNames, $options) {
 
 /**
  * Execute the sync operation for a single table
+ * Uses deduplication mode: only CREATE new records, no UPDATE operations
  */
 function executeSync($sourceDb, $targetDb, $tableName, $options) {
     $createMissing = $options['create_missing'];
-    $updateExisting = $options['update_existing'];
+    $updateExisting = $options['update_existing']; // Ignored in deduplication mode
     $dryRun = $options['dry_run'];
     
     $logId = 'sync_' . uniqid();
     
-    logAction('INFO', "Starting sync: {$tableName} ({$sourceDb} → {$targetDb})", [
+    logAction('INFO', "Starting deduplication sync: {$tableName} ({$sourceDb} → {$targetDb})", [
         'log_id' => $logId,
         'create_missing' => $createMissing,
-        'update_existing' => $updateExisting,
-        'dry_run' => $dryRun
+        'update_existing' => $updateExisting,  // Ignored
+        'dry_run' => $dryRun,
+        'mode' => 'deduplication'
     ]);
     
     // Get primary keys
@@ -332,39 +344,48 @@ function executeSync($sourceDb, $targetDb, $tableName, $options) {
         throw new Exception('Table has no primary key');
     }
     
-    // Get comparison data
-    $comparison = compareRecords($sourceDb, $targetDb, $tableName, $primaryKeys);
+    // Get comparison data using deduplication mode (compare by non-PK columns)
+    $comparison = compareRecordsByNonPK($sourceDb, $targetDb, $tableName, $primaryKeys);
     
     if (isset($comparison['error'])) {
         throw new Exception($comparison['error']);
     }
+    
+    // Deduplication mode: only CREATE, no UPDATE
+    $recordsToCreate = $comparison['missingInB_rows'];
+    $recordsToSkip = $comparison['alreadyExist_rows'] ?? [];
     
     $results = [
         'table' => $tableName,
         'source_db' => $sourceDb,
         'target_db' => $targetDb,
         'dry_run' => $dryRun,
+        'sync_mode' => 'deduplication',
         'create' => [
-            'total' => $comparison['missingInB'],
+            'total' => count($recordsToCreate),
             'success' => 0,
             'failed' => 0,
             'details' => []
         ],
         'update' => [
-            'total' => $comparison['differentData'],
+            'total' => 0,  // No updates in deduplication mode
             'success' => 0,
             'failed' => 0,
+            'details' => []
+        ],
+        'skip' => [
+            'total' => count($recordsToSkip),
             'details' => []
         ]
     ];
     
-    // Execute CREATE operations (missing in target)
+    // Execute CREATE operations for new unique records
     if ($createMissing && !$dryRun) {
-        foreach ($comparison['missingInB_rows'] as $row) {
-            // Extract row data from compareRecords structure (has 'pk', 'data', and 'full_hash' keys)
+        foreach ($recordsToCreate as $row) {
+            // Extract row data from comparison structure (has 'pk' and 'data' keys)
             $rowData = $row['data'] ?? $row;
-            // Remove 'pk' and 'full_hash' keys if they exist (these are computed columns, not actual DB columns)
-            unset($rowData['pk'], $rowData['full_hash']);
+            // Remove 'pk' key if it exists (computed column, not actual DB column)
+            unset($rowData['pk'], $rowData['data_hash']);
             
             try {
                 $result = insertRow($sourceDb, $targetDb, $tableName, $rowData);
@@ -401,83 +422,39 @@ function executeSync($sourceDb, $targetDb, $tableName, $options) {
             }
         }
     } else {
-        // Just count for dry run
-        $results['create']['details'] = array_map(function($row) use ($primaryKeys) {
+        // Dry run or skipped: just show what would happen
+        $results['create']['details'] = array_map(function($row) use ($primaryKeys, $dryRun) {
             $rowData = $row['data'] ?? $row;
-            // Remove 'pk' and 'full_hash' keys if they exist
-            unset($rowData['pk'], $rowData['full_hash']);
+            unset($rowData['pk'], $rowData['data_hash']);
             return [
                 'status' => $dryRun ? 'pending' : 'skipped',
                 'pk' => $row['pk'] ?? getPkValue($rowData, $primaryKeys),
-                'message' => $dryRun ? 'Would be created' : 'Skipped'
+                'message' => $dryRun ? 'Would be created' : 'Skipped (create option not enabled)'
             ];
-        }, $comparison['missingInB_rows']);
+        }, $recordsToCreate);
     }
     
-    // Execute UPDATE operations (different data)
-    if ($updateExisting && !$dryRun) {
-        foreach ($comparison['differentData_rows'] as $rowDiff) {
-            $rowA = $rowDiff['dataA']; // Source data
-            $rowB = $rowDiff['dataB']; // Target data
-            
-            // Remove 'full_hash' key if it exists (computed column, not actual DB column)
-            unset($rowA['full_hash'], $rowB['full_hash']);
-            
-            try {
-                $result = updateRow($targetDb, $tableName, $primaryKeys, $rowA);
-                
-                if ($result['success']) {
-                    $results['update']['success']++;
-                    $results['update']['details'][] = [
-                        'status' => 'success',
-                        'pk' => $rowDiff['pk'],
-                        'message' => 'Updated successfully'
-                    ];
-                } else {
-                    $results['update']['failed']++;
-                    $results['update']['details'][] = [
-                        'status' => 'failed',
-                        'pk' => $rowDiff['pk'],
-                        'message' => $result['message']
-                    ];
-                    
-                    logAction('ERROR', "UPDATE failed for {$tableName}: {$result['message']}", [
-                        'log_id' => $logId,
-                        'table' => $tableName,
-                        'operation' => 'UPDATE',
-                        'pk' => $rowDiff['pk']
-                    ]);
-                }
-            } catch (Exception $e) {
-                $results['update']['failed']++;
-                $results['update']['details'][] = [
-                    'status' => 'failed',
-                    'pk' => $rowDiff['pk'],
-                    'message' => $e->getMessage()
-                ];
-            }
-        }
-    } else {
-        // Just count for dry run
-        $results['update']['details'] = array_map(function($rowDiff) {
-            return [
-                'status' => $dryRun ? 'pending' : 'skipped',
-                'pk' => $rowDiff['pk'],
-                'message' => $dryRun ? 'Would be updated' : 'Skipped'
-            ];
-        }, $comparison['differentData_rows']);
-    }
+    // Track skipped records (duplicates)
+    $results['skip']['details'] = array_map(function($row) use ($primaryKeys) {
+        $rowData = $row['data'] ?? $row;
+        unset($rowData['pk'], $rowData['data_hash']);
+        return [
+            'pk' => $row['pk'] ?? getPkValue($rowData, $primaryKeys),
+            'reason' => 'Non-PK data already exists (duplicate)'
+        ];
+    }, $recordsToSkip);
     
     $totalOperations = $results['create']['total'] + $results['update']['total'];
     $totalSuccess = $results['create']['success'] + $results['update']['success'];
     $totalFailed = $results['create']['failed'] + $results['update']['failed'];
     
-    logAction('INFO', "Sync completed: {$tableName} ({$totalSuccess}/{$totalOperations} success, {$totalFailed} failed)", [
+    logAction('INFO', "Sync completed: {$tableName} ({$totalSuccess}/{$totalOperations} success, {$totalFailed} failed, {$results['skip']['total']} skipped)", [
         'log_id' => $logId,
         'table' => $tableName,
         'total' => $totalOperations,
         'success' => $totalSuccess,
-        'failed' => $totalFailed
+        'failed' => $totalFailed,
+        'skipped' => $results['skip']['total']
     ]);
     
     $success = $dryRun || $totalFailed === 0;
@@ -485,8 +462,10 @@ function executeSync($sourceDb, $targetDb, $tableName, $options) {
     return [
         'success' => $success,
         'message' => $dryRun 
-            ? "Dry run: {$results['create']['total']} CREATE, {$results['update']['total']} UPDATE would be executed"
-            : "Sync completed: {$totalSuccess} of {$totalOperations} operations successful",
+            ? "Dry run: {$results['create']['total']} CREATE would be executed, {$results['skip']['total']} duplicates would be skipped"
+            : "Sync completed: {$totalSuccess} of {$totalOperations} operations successful" . 
+              ($totalFailed > 0 ? ", {$totalFailed} failed" : "") . 
+              ", {$results['skip']['total']} duplicates skipped",
         'data' => $results
     ];
 }

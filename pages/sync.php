@@ -211,7 +211,7 @@ require_once '../templates/header.php';
         </div>
     </div>
 </div>
-
+<script src="https://code.jquery.com/jquery-4.0.0.min.js"></script>
 <script>
 let syncPreviewData = null;
 let commonTables = [];
@@ -601,6 +601,8 @@ function updateSelectedCountDb() {
     }
 }
 
+
+
 // Execute sync for multiple tables
 function executeSyncDB() {
     // alert(syncPreviewData,"here")
@@ -640,10 +642,10 @@ function executeSyncDB() {
     }
     
     // Show progress modal
-    const modal = new bootstrap.Modal(document.getElementById('syncProgressModal'));
-    modal.show();
+
+    // console.log("hi");return;
     updateSyncProgress(0, 'Starting sync...');
-    
+    showLoader()
     fetch('../api/sync_records.php', {
         method: 'POST',
         headers: {
@@ -662,8 +664,8 @@ function executeSyncDB() {
     })
     .then(response => response.json())
     .then(data => {
-        hideLoader();
-        modal.hide();
+        hideLoader()
+
         
         if (data.success) {
             const result = data.data;
@@ -683,8 +685,8 @@ function executeSyncDB() {
         }
     })
     .catch(error => {
-        hideLoader();
-        modal.hide();
+        hideLoader()
+         
         showToast('Sync error: ' + error.message, 'error');
     });
 }

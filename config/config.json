@@ -9,7 +9,7 @@
     },
     "db_b": {
         "host": "localhost",
-        "name": "cfms_circuit_mirpur_new",
+        "name": "cfms_circuit_rwk_new",
         "username": "root",
         "password": "root",
         "port": 3306,
